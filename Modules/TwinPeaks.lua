@@ -151,106 +151,110 @@ end
 
 
 function mod:CHAT_MSG_BG_SYSTEM_ALLIANCE(event, EventMessage)
-	if string.find(EventMessage, L["pickedA"]) then
-		PVPSound:AddToQueue(PS.SoundPackDirectory.."\\"..PS_SoundPackLanguage.."\\"..MyZone.."\\ALLIANCE_Flag_Taken.mp3")
-		AllianceFlagPositionX = nil
-		AllianceFlagPositionY = nil
-	elseif string.find(EventMessage, L["dropped"]) then
-		PVPSound:AddToQueue(PS.SoundPackDirectory.."\\"..PS_SoundPackLanguage.."\\"..MyZone.."\\ALLIANCE_Flag_Dropped.mp3")
+    if string.find(EventMessage, L["pickedA"]) then
+        PVPSound:AddToQueue(PS.SoundPackDirectory.."\\"..PS_SoundPackLanguage.."\\"..MyZone.."\\ALLIANCE_Flag_Taken.mp3")
+        AllianceFlagPositionX = nil
+        AllianceFlagPositionY = nil
 
-		for i = 1, 2 do
-			local type = select(3, GetBattlefieldFlagPosition(i))
+    elseif string.find(EventMessage, L["dropped"]) then
+        PVPSound:AddToQueue(PS.SoundPackDirectory.."\\"..PS_SoundPackLanguage.."\\"..MyZone.."\\ALLIANCE_Flag_Dropped.mp3")
 
-			if type == 137218 then -- type for "AllianceFlag"
-				AllianceFlagPositionX = select(1, GetBattlefieldFlagPosition(i))
-				AllianceFlagPositionY = select(2, GetBattlefieldFlagPosition(i))
-				break
-			end
-		end
-	elseif string.find(EventMessage, L["returned"]) then
-		PVPSound:AddToQueue(PS.SoundPackDirectory.."\\"..PS_SoundPackLanguage.."\\"..MyZone.."\\ALLIANCE_Flag_Returned.mp3")
+        -- Check if C_Commentator.GetFlagInfo exists before calling it
+        if C_Commentator and C_Commentator.GetFlagInfo then
+            local flagInfo = C_Commentator.GetFlagInfo(1) -- 1 for Alliance
+            if flagInfo and flagInfo.unitToken then
+                local position = C_Map.GetPlayerMapPosition(twinPeaksMapID, flagInfo.unitToken)
+                if position then
+                    AllianceFlagPositionX, AllianceFlagPositionY = position:GetXY()
+                end
+            end
+        end
 
-		-- Horde Flag Taken
-		local HordeFlagStatus
-		--1 - Alliance flag dropped when Horde flag was taken
-		--0 - Alliance flag dropped when Horde flag was not taken
-		if (C_UIWidgetManager.GetDoubleStateIconRowVisualizationInfo(1640)) then --1640 is a icon row widget with A & H flag icons
-			HordeFlagStatus = C_UIWidgetManager.GetDoubleStateIconRowVisualizationInfo(1640).leftIcons[1].iconState
-		end
+    elseif string.find(EventMessage, L["returned"]) then
+        PVPSound:AddToQueue(PS.SoundPackDirectory.."\\"..PS_SoundPackLanguage.."\\"..MyZone.."\\ALLIANCE_Flag_Returned.mp3")
 
-		if C_PvP.IsInBrawl() then --need to change for only one type of brawls (wsg scramble)
-			--C_PvP.GetActiveBrawlInfo()
-			HordeFlagStatus = 0
-		end
+        -- Determine Horde Flag Status using C_UIWidgetManager
+        local HordeFlagStatus
+        if (C_UIWidgetManager.GetDoubleStateIconRowVisualizationInfo(1640)) then -- 1640 is a widget with flag icons
+            HordeFlagStatus = C_UIWidgetManager.GetDoubleStateIconRowVisualizationInfo(1640).leftIcons[1].iconState
+        end
 
-		--flag save in a flag enemies flagroom
-		local MyFaction = UnitFactionGroup("player")
-		if MyFaction == "Alliance" and HordeFlagStatus == 0 then
-			if AllianceFlagPositionX and AllianceFlagPositionX ~= 0 and AllianceFlagPositionX ~= "" then
-				if AllianceFlagPositionY and AllianceFlagPositionY ~= 0 and AllianceFlagPositionY ~= "" then
-					if AllianceFlagPositionX >= 0.452 and AllianceFlagPositionX <= 0.509 then
-						if AllianceFlagPositionY >= 0.795 and AllianceFlagPositionY <= 0.908 then
-							PVPSound:AddToQueue(PS.SoundPackDirectory.."\\"..PS_SoundPackLanguage.."\\"..MyZone.."\\LastSecondSave.mp3")
-						end
-					end
-				end
-			end
-		end
+        if C_PvP.IsInBrawl() then
+            -- For specific brawls (like Warsong Scramble), reset HordeFlagStatus
+            HordeFlagStatus = 0
+        end
 
-		AllianceFlagPositionX = nil
-		AllianceFlagPositionY = nil
-	end
+        -- Check if the Alliance flag was saved in the enemy's flag room
+        local MyFaction = UnitFactionGroup("player")
+        if MyFaction == "Alliance" and HordeFlagStatus == 0 then
+            if AllianceFlagPositionX and AllianceFlagPositionX ~= 0 and AllianceFlagPositionX ~= "" then
+                if AllianceFlagPositionY and AllianceFlagPositionY ~= 0 and AllianceFlagPositionY ~= "" then
+                    if AllianceFlagPositionX >= 0.452 and AllianceFlagPositionX <= 0.509 then
+                        if AllianceFlagPositionY >= 0.795 and AllianceFlagPositionY <= 0.908 then
+                            PVPSound:AddToQueue(PS.SoundPackDirectory.."\\"..PS_SoundPackLanguage.."\\"..MyZone.."\\LastSecondSave.mp3")
+                        end
+                    end
+                end
+            end
+        end
+
+        AllianceFlagPositionX = nil
+        AllianceFlagPositionY = nil
+    end
 end
 
 
 function mod:CHAT_MSG_BG_SYSTEM_HORDE(event, EventMessage)
-	if string.find(EventMessage, L["picked"]) then
-		PVPSound:AddToQueue(PS.SoundPackDirectory.."\\"..PS_SoundPackLanguage.."\\"..MyZone.."\\HORDE_Flag_Taken.mp3")
-		HordeFlagPositionX = nil
-		HordeFlagPositionY = nil
-	elseif string.find(EventMessage, L["dropped"]) then
-		PVPSound:AddToQueue(PS.SoundPackDirectory.."\\"..PS_SoundPackLanguage.."\\"..MyZone.."\\HORDE_Flag_Dropped.mp3")
+    if string.find(EventMessage, L["picked"]) then
+        PVPSound:AddToQueue(PS.SoundPackDirectory.."\\"..PS_SoundPackLanguage.."\\"..MyZone.."\\HORDE_Flag_Taken.mp3")
+        HordeFlagPositionX = nil
+        HordeFlagPositionY = nil
 
-		for i = 1, 2 do
-			local type = select(3, GetBattlefieldFlagPosition(i))
+    elseif string.find(EventMessage, L["dropped"]) then
+        PVPSound:AddToQueue(PS.SoundPackDirectory.."\\"..PS_SoundPackLanguage.."\\"..MyZone.."\\HORDE_Flag_Dropped.mp3")
 
-			if type == 137200 then -- type for "HordeFlag"
-				HordeFlagPositionX = select(1, GetBattlefieldFlagPosition(i))
-				HordeFlagPositionY = select(2, GetBattlefieldFlagPosition(i))
-				break
-			end
-		end
-	elseif string.find(EventMessage, L["returned"]) then
-		PVPSound:AddToQueue(PS.SoundPackDirectory.."\\"..PS_SoundPackLanguage.."\\"..MyZone.."\\HORDE_Flag_Returned.mp3")
-		-- Alliance Flag Taken
-		local AllianceFlagStatus
-		--1 - Alliance flag dropped when Horde flag was taken
-		--0 - Alliance flag dropped when Horde flag was not taken
-		if (C_UIWidgetManager.GetDoubleStateIconRowVisualizationInfo(1640)) then --1640 is a icon row widget with A & H flag icons
-			AllianceFlagStatus = C_UIWidgetManager.GetDoubleStateIconRowVisualizationInfo(1640).rightIcons[1].iconState
-		end
+        -- Check if C_Commentator.GetFlagInfo exists before calling it
+        if C_Commentator and C_Commentator.GetFlagInfo then
+            local flagInfo = C_Commentator.GetFlagInfo(2) -- 2 for Horde
+            if flagInfo and flagInfo.unitToken then
+                local position = C_Map.GetPlayerMapPosition(twinPeaksMapID, flagInfo.unitToken)
+                if position then
+                    HordeFlagPositionX, HordeFlagPositionY = position:GetXY()
+                end
+            end
+        end
 
-		if C_PvP.IsInBrawl() then
-			--C_PvP.GetActiveBrawlInfo()
-			AllianceFlagStatus = 0
-		end
+    elseif string.find(EventMessage, L["returned"]) then
+        PVPSound:AddToQueue(PS.SoundPackDirectory.."\\"..PS_SoundPackLanguage.."\\"..MyZone.."\\HORDE_Flag_Returned.mp3")
 
-		local MyFaction = UnitFactionGroup("player")
-		if MyFaction == "Horde" and AllianceFlagStatus == 0 then
-			if HordeFlagPositionX and HordeFlagPositionX ~= 0 and HordeFlagPositionX ~= "" then
-				if HordeFlagPositionY and self.HordeFlagPositionY ~= 0 and HordeFlagPositionY ~= "" then
-					if HordeFlagPositionX >= 0.563 and HordeFlagPositionX <= 0.640 then
-						if HordeFlagPositionY >= 0.124 and HordeFlagPositionY <= 0.252 then
-							PVPSound:AddToQueue(PS.SoundPackDirectory.."\\"..PS_SoundPackLanguage.."\\"..MyZone.."\\LastSecondSave.mp3")
-						end
-					end
-				end
-			end
-		end
+        -- Determine Alliance Flag Status using C_UIWidgetManager
+        local AllianceFlagStatus
+        if (C_UIWidgetManager.GetDoubleStateIconRowVisualizationInfo(1640)) then -- 1640 is a widget with flag icons
+            AllianceFlagStatus = C_UIWidgetManager.GetDoubleStateIconRowVisualizationInfo(1640).rightIcons[1].iconState
+        end
 
-		HordeFlagPositionX = nil
-		HordeFlagPositionY = nil
-	end
+        if C_PvP.IsInBrawl() then
+            -- For specific brawls (like Warsong Scramble), reset AllianceFlagStatus
+            AllianceFlagStatus = 0
+        end
+
+        -- Check if the Horde flag was saved in the enemy's flag room
+        local MyFaction = UnitFactionGroup("player")
+        if MyFaction == "Horde" and AllianceFlagStatus == 0 then
+            if HordeFlagPositionX and HordeFlagPositionX ~= 0 and HordeFlagPositionX ~= "" then
+                if HordeFlagPositionY and HordeFlagPositionY ~= 0 and HordeFlagPositionY ~= "" then
+                    if HordeFlagPositionX >= 0.452 and HordeFlagPositionX <= 0.509 then
+                        if HordeFlagPositionY >= 0.795 and HordeFlagPositionY <= 0.908 then
+                            PVPSound:AddToQueue(PS.SoundPackDirectory.."\\"..PS_SoundPackLanguage.."\\"..MyZone.."\\LastSecondSave.mp3")
+                        end
+                    end
+                end
+            end
+        end
+
+        HordeFlagPositionX = nil
+        HordeFlagPositionY = nil
+    end
 end
 
 function mod:UPDATE_UI_WIDGET()
