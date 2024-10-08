@@ -6,4 +6,4 @@ Based off of PVPSound version 6.0.0 which last worked with game version 10.2.5.
 
 Have errors yourself? Install both addons "BugSack" and "BugGrabber" from somewhere like curseforge, then attach the lua error logs in the issue section.
 
-Note: The "Sounds" directory is in archive Sounds.tar (found here: [Sounds.tar](https://gofile.io/d/ertung)), you will need to decompress it and place it in the PVPSound directory in your addons folder.
+Note: The "Sounds" directory is in archive [Sounds.tar](https://gofile.io/d/ertung), you will need to decompress it and place it in the PVPSound directory in your addons folder.
