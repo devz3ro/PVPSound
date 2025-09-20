@@ -237,7 +237,11 @@ function API:Announce(zone)
 		-- 1 for Alliance
 		-- 0 for Horde
 		if PS.isRetail then
-			MyFaction = GetBattlefieldArenaFaction()
+			local f = UnitFactionGroup("player")
+			if UnitIsMercenary and UnitIsMercenary("player") then
+				f = (f == "Alliance") and "Horde" or "Alliance"
+			end
+			MyFaction = (f == "Alliance") and 1 or 0
 		else
 			MyFaction = UnitFactionGroup("player")
 			if MyFaction == "Horde" then
