@@ -20,4 +20,5 @@
 	<Script file = "TolBarad.lua" />
 	<Script file = "Ashran.lua" />
 	<Script file = "Arenas.lua" />
+    <Script file = "DeephaulRavine.lua" />
 </Ui>

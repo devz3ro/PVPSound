@@ -504,7 +504,7 @@ function PVPSound:OnEvent(event, ...)
 			end
 			PVPSoundOptions:OptionsAddonIsLoaded()
 			-- Addon loaded message
-			-- print("|cFF50C0FFPVPSound |cFFFFA500"..PVPS_GetAddOnMetadata("PVPSound", "Version").."|cFF50C0FF loaded.|r")
+			-- print("|cFF50C0FFPVPSound |cFFFFA500"..GetAddOnMetadata("PVPSound", "Version").."|cFF50C0FF loaded.|r")
 		end
 	end
 end
