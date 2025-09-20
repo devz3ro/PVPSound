@@ -29,7 +29,7 @@ function PVPSoundOptions:OptionsInitalize(self)
 	})
 	self:SetBackdropColor(0.1, 0.1, 0.1)
 	self:SetBackdropBorderColor(0.9, 1.0, 0.9)
-	PVPSoundOptionsHeader:SetText("PVPSound "..GetAddOnMetadata("PVPSound", "Version"))
+	PVPSoundOptionsHeader:SetText("PVPSound "..PVPS_GetAddOnMetadata("PVPSound", "Version"))
 	PVPSoundOptions:OptionsInitalizeButtons()
 	tinsert(UISpecialFrames, self:GetName())
 end
@@ -2244,7 +2244,7 @@ function PVPSound:SlashCommands(arg1)
 end
 
 function PVPSound:PrintSlashHelp()
-	print("|cFFFFA500PVPSound "..GetAddOnMetadata("PVPSound", "Version").." "..L["Command list"].."|r")
+	print("|cFFFFA500PVPSound "..PVPS_GetAddOnMetadata("PVPSound", "Version").." "..L["Command list"].."|r")
 	print("|cFF50C0FF/ps - |cFFFFFFA0"..L["Show status"].."|r")
 	print("|cFF50C0FF/ps pvp, pve, pvpandpve - |cFFFFFFA0"..L["Switch between PVP and PVE mode"].."|r")
 	print("|cFF50C0FF/ps emote - |cFFFFFFA0"..L["Enables or Disables Emotes completely"].."|r")
@@ -2278,7 +2278,7 @@ function PVPSound:PrintSlashHelp()
 end
 
 function PVPSound:PrintSlashMenu()
-	print("|cFFFFA500PVPSound "..GetAddOnMetadata("PVPSound", "Version").." "..L["Loaded. Type /ps help for options"].."|r")
+	print("|cFFFFA500PVPSound "..PVPS_GetAddOnMetadata("PVPSound", "Version").." "..L["Loaded. Type /ps help for options"].."|r")
 	if PS_Mode == "PVP" then
 		print("|cFF50C0FF"..L["Mode"]..": |cFFADFF2F"..L["[PVP]"].."|r")
 	elseif PS_Mode == "PVE" then

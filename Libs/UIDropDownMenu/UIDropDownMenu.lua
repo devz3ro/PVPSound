@@ -1165,13 +1165,13 @@ function Lib_UIDropDownMenuButton_GetName(self)
 	return _G[self:GetName().."NormalText"]:GetText();
 end
 
-function Lib_UIDropDownMenuButton_OpenColorPicker(self, button)
+function Lib_UIDropDownMenuButton_PVPS_OpenColorPicker(self, button)
 	CloseMenus();
 	if ( not button ) then
 		button = self;
 	end
 	LIB_UIDROPDOWNMENU_MENU_VALUE = button.value;
-	OpenColorPicker(button); --remains shared through color picker frame
+	PVPS_OpenColorPicker(button); --remains shared through color picker frame
 end
 
 function Lib_UIDropDownMenu_DisableButton(level, id)
@@ -1233,7 +1233,7 @@ function Lib_UIDropDownMenu_GetValue(id)
 	end
 end
 
---[[function OpenColorPicker(info) --ColorPicker stuff not changed
+--[[function PVPS_OpenColorPicker(info) --ColorPicker stuff not changed
 	ColorPickerFrame.func = info.swatchFunc;
 	ColorPickerFrame.hasOpacity = info.hasOpacity;
 	ColorPickerFrame.opacityFunc = info.opacityFunc;

@@ -15,13 +15,13 @@ local MyZone = "Zone_SilvershardMines"
 
 function mod:CHAT_MSG_BG_SYSTEM_ALLIANCE(event, EventMessage)
 	if string.find(EventMessage, L["captured"]) then
-		PVPSound:AddToQueue(PS.SoundPackDirectory.."\"..PS_SoundPackLanguage.."\"..MyZone.."\\ALLIANCE_Scores.mp3")
+		PVPSound:AddToQueue(PS.SoundPackDirectory.."\\"..PS_SoundPackLanguage.."\\"..MyZone.."\\ALLIANCE_Scores.mp3")
 	end
 end
 
 function mod:CHAT_MSG_BG_SYSTEM_HORDE(event, EventMessage)
 	if string.find(EventMessage, L["captured"]) then
-		PVPSound:AddToQueue(PS.SoundPackDirectory.."\"..PS_SoundPackLanguage.."\"..MyZone.."\\HORDE_Scores.mp3")
+		PVPSound:AddToQueue(PS.SoundPackDirectory.."\\"..PS_SoundPackLanguage.."\\"..MyZone.."\\HORDE_Scores.mp3")
 	end
 end
 
