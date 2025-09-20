@@ -1,4 +1,4 @@
-# PVPSound
+# PVPSound 11.2.0
 
 My attempt to fix some of the lua errors using this addon with the latest World of Warcraft expansion (current game version 11.2.0).
 
