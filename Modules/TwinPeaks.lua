@@ -159,11 +159,11 @@ function mod:CHAT_MSG_BG_SYSTEM_ALLIANCE(event, EventMessage)
 		PVPSound:AddToQueue(PS.SoundPackDirectory.."\\"..PS_SoundPackLanguage.."\\"..MyZone.."\\ALLIANCE_Flag_Dropped.mp3")
 
 		for i = 1, 2 do
-			local type = select(3, GetBattlefieldFlagPosition(i))
+			local type = select(3, PVPS_GetBattlefieldFlagPosition(i))
 
 			if type == 137218 then -- type for "AllianceFlag"
-				AllianceFlagPositionX = select(1, GetBattlefieldFlagPosition(i))
-				AllianceFlagPositionY = select(2, GetBattlefieldFlagPosition(i))
+				AllianceFlagPositionX = select(1, PVPS_GetBattlefieldFlagPosition(i))
+				AllianceFlagPositionY = select(2, PVPS_GetBattlefieldFlagPosition(i))
 				break
 			end
 		end
@@ -212,11 +212,11 @@ function mod:CHAT_MSG_BG_SYSTEM_HORDE(event, EventMessage)
 		PVPSound:AddToQueue(PS.SoundPackDirectory.."\\"..PS_SoundPackLanguage.."\\"..MyZone.."\\HORDE_Flag_Dropped.mp3")
 
 		for i = 1, 2 do
-			local type = select(3, GetBattlefieldFlagPosition(i))
+			local type = select(3, PVPS_GetBattlefieldFlagPosition(i))
 
 			if type == 137200 then -- type for "HordeFlag"
-				HordeFlagPositionX = select(1, GetBattlefieldFlagPosition(i))
-				HordeFlagPositionY = select(2, GetBattlefieldFlagPosition(i))
+				HordeFlagPositionX = select(1, PVPS_GetBattlefieldFlagPosition(i))
+				HordeFlagPositionY = select(2, PVPS_GetBattlefieldFlagPosition(i))
 				break
 			end
 		end

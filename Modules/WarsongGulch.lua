@@ -197,19 +197,19 @@ function mod:CHAT_MSG_BG_SYSTEM_ALLIANCE(event, EventMessage)
 
 		for i = 1, 2 do
 			if PS.isRetail then
-				local type = select(3, C_PvP.GetBattlefieldFlagPosition(i, mod.zoneId))
+				local type = select(3, C_PvP.PVPS_GetBattlefieldFlagPosition(i, mod.zoneId))
 
 				if type == 137218 then -- type for "AllianceFlag"
-					AllianceFlagPositionX = select(1, C_PvP.GetBattlefieldFlagPosition(i, mod.zoneId))
-					AllianceFlagPositionY = select(2, C_PvP.GetBattlefieldFlagPosition(i, mod.zoneId))
+					AllianceFlagPositionX = select(1, C_PvP.PVPS_GetBattlefieldFlagPosition(i, mod.zoneId))
+					AllianceFlagPositionY = select(2, C_PvP.PVPS_GetBattlefieldFlagPosition(i, mod.zoneId))
 					break
 				end
 			else
-				local type = select(3, GetBattlefieldFlagPosition(i))
+				local type = select(3, PVPS_GetBattlefieldFlagPosition(i))
 
 				if type == 137218 then -- type for "AllianceFlag"
-					AllianceFlagPositionX = select(1, GetBattlefieldFlagPosition(i))
-					AllianceFlagPositionY = select(2, GetBattlefieldFlagPosition(i))
+					AllianceFlagPositionX = select(1, PVPS_GetBattlefieldFlagPosition(i))
+					AllianceFlagPositionY = select(2, PVPS_GetBattlefieldFlagPosition(i))
 					break
 				end
 			end
@@ -276,19 +276,19 @@ function mod:CHAT_MSG_BG_SYSTEM_HORDE(event, EventMessage)
 
 		for i = 1, 2 do
 			if PS.isRetail then
-				local type = select(3, C_PvP.GetBattlefieldFlagPosition(i, mod.zoneId))
+				local type = select(3, C_PvP.PVPS_GetBattlefieldFlagPosition(i, mod.zoneId))
 
 				if type == 137200 then -- type for "HordeFlag"
-					HordeFlagPositionX = select(1, C_PvP.GetBattlefieldFlagPosition(i, mod.zoneId))
-					HordeFlagPositionY = select(2, C_PvP.GetBattlefieldFlagPosition(i, mod.zoneId))
+					HordeFlagPositionX = select(1, C_PvP.PVPS_GetBattlefieldFlagPosition(i, mod.zoneId))
+					HordeFlagPositionY = select(2, C_PvP.PVPS_GetBattlefieldFlagPosition(i, mod.zoneId))
 					break
 				end
 			else
-				local type = select(3, GetBattlefieldFlagPosition(i))
+				local type = select(3, PVPS_GetBattlefieldFlagPosition(i))
 
 				if type == 137200 then -- type for "HordeFlag"
-					HordeFlagPositionX = select(1, GetBattlefieldFlagPosition(i))
-					HordeFlagPositionY = select(2, GetBattlefieldFlagPosition(i))
+					HordeFlagPositionX = select(1, PVPS_GetBattlefieldFlagPosition(i))
+					HordeFlagPositionY = select(2, PVPS_GetBattlefieldFlagPosition(i))
 					break
 				end
 			end
