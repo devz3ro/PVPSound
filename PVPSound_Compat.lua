@@ -54,3 +54,18 @@ function PVPS_OpenColorPicker(info)
         return OpenColorPicker(info)
     end
 end
+
+
+-- Wrapper for battleground flag position across API versions.
+if not PVPS_GetBattlefieldFlagPosition then
+    function PVPS_GetBattlefieldFlagPosition(index)
+        local uiMapId = C_Map and C_Map.GetBestMapForUnit and C_Map.GetBestMapForUnit("player") or nil
+        if C_PvP and C_PvP.GetBattlefieldFlagPosition and uiMapId then
+            local x, y, token = C_PvP.GetBattlefieldFlagPosition(index, uiMapId)
+            return x, y, token
+        elseif _G.GetBattlefieldFlagPosition then
+            return _G.GetBattlefieldFlagPosition(index)
+        end
+        return nil, nil, nil
+    end
+end
