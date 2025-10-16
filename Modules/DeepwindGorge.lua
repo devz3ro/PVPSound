@@ -3,7 +3,7 @@ local PVPSound = ns.PVPSound
 local PS = ns.PS
 
 local API = PVPSound.API
-local mod = API:RegisterMod(1576, "pvp", "Deepwind Gorge", 1105)
+local mod = API:RegisterMod(1576, "pvp", "Deepwind Gorge", 2245)
 
 local MyZone = "Zone_DeepwindGorge" -- I don't want to rewrite some code here, so I use this
 
@@ -154,3 +154,4 @@ function mod:Unload()
 	FreeResourses()
 	self.loaded = false
 end
+
