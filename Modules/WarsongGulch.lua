@@ -1,4 +1,16 @@
 local addon, ns = ...
+
+-- file-local wrapper to handle Retail/Classic API for flag positions (surgical fix)
+local function PVPS_GetBattlefieldFlagPosition(index)
+    local uiMapId = C_Map and C_Map.GetBestMapForUnit and C_Map.GetBestMapForUnit("player") or nil
+    if PS and PS.isRetail and C_PvP and C_PvP.GetBattlefieldFlagPosition and uiMapId then
+        return C_PvP.GetBattlefieldFlagPosition(index, uiMapId)
+    end
+    if _G.GetBattlefieldFlagPosition then
+        return _G.GetBattlefieldFlagPosition(index)
+    end
+    return nil, nil, nil
+end
 local PVPSound = ns.PVPSound
 local PS = ns.PS
 local L = ns.L
@@ -197,11 +209,11 @@ function mod:CHAT_MSG_BG_SYSTEM_ALLIANCE(event, EventMessage)
 
 		for i = 1, 2 do
 			if PS.isRetail then
-				local type = select(3, C_PvP.PVPS_GetBattlefieldFlagPosition(i, mod.zoneId))
+				local type = select(3, C_PvP.GetBattlefieldFlagPosition(i, mod.zoneId))
 
 				if type == 137218 then -- type for "AllianceFlag"
-					AllianceFlagPositionX = select(1, C_PvP.PVPS_GetBattlefieldFlagPosition(i, mod.zoneId))
-					AllianceFlagPositionY = select(2, C_PvP.PVPS_GetBattlefieldFlagPosition(i, mod.zoneId))
+					AllianceFlagPositionX = select(1, C_PvP.GetBattlefieldFlagPosition(i, mod.zoneId))
+					AllianceFlagPositionY = select(2, C_PvP.GetBattlefieldFlagPosition(i, mod.zoneId))
 					break
 				end
 			else
@@ -276,11 +288,11 @@ function mod:CHAT_MSG_BG_SYSTEM_HORDE(event, EventMessage)
 
 		for i = 1, 2 do
 			if PS.isRetail then
-				local type = select(3, C_PvP.PVPS_GetBattlefieldFlagPosition(i, mod.zoneId))
+				local type = select(3, C_PvP.GetBattlefieldFlagPosition(i, mod.zoneId))
 
 				if type == 137200 then -- type for "HordeFlag"
-					HordeFlagPositionX = select(1, C_PvP.PVPS_GetBattlefieldFlagPosition(i, mod.zoneId))
-					HordeFlagPositionY = select(2, C_PvP.PVPS_GetBattlefieldFlagPosition(i, mod.zoneId))
+					HordeFlagPositionX = select(1, C_PvP.GetBattlefieldFlagPosition(i, mod.zoneId))
+					HordeFlagPositionY = select(2, C_PvP.GetBattlefieldFlagPosition(i, mod.zoneId))
 					break
 				end
 			else
