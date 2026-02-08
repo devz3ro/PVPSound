@@ -1,9 +1,9 @@
 ## Interface: 120000
 ## Title: PVPSound |cFF99CC01rev|r |cFFFF00006.0.1|r
-## Version: 6.0.1
+## Version: 6.0.1-patched-v5
 ## Author: Resike
 ## Notes: PVP killing blow and battleground notification addon, with sound packs from various games.
-## SavedVariablesPerCharacter: PS_EnableAddon, PS_AddonLanguage, PS_Mode, PS_Emote, PS_EmoteMode, PS_DeathMessage, PS_KillSound, PS_MultiKillSound, PS_PaybackSound, PS_BattlegroundSound, PS_SoundEffect, PS_Execute, PS_KillSoundEngine, PS_BattlegroundSoundEngine, PS_DataShare, PS_KillSct, PS_MultiKillSct, PS_PaybackSct, PS_SctEngine, PSSctFrame, PS_HideServerName, PS_Channel, PS_PetKill, PS_KillSoundPackName, PS_KillSoundPackLanguage, PS_SoundPackName, PS_SoundPackLanguage, PS_Debug, PS_PoiDebug
+## SavedVariablesPerCharacter: PS_EnableAddon, PS_AddonLanguage, PS_Mode, PS_Emote, PS_EmoteMode, PS_DeathMessage, PS_KillSound, PS_MultiKillSound, PS_PaybackSound, PS_BattlegroundSound, PS_SoundEffect, PS_Execute, PS_KillSoundEngine, PS_BattlegroundSoundEngine, PS_DataShare, PS_KillSct, PS_MultiKillSct, PS_PaybackSct, PS_SctEngine, PSSctFrame, PS_HideServerName, PS_Channel, PS_PetKill, PS_KillSoundPackName, PS_KillSoundPackLanguage, PS_SoundPackName, PS_SoundPackLanguage, PS_Debug, PS_PoiDebug, PS_ShowKillTextWithName
 ## DefaultState: Enabled
 
 Libs\LibStub\LibStub.lua

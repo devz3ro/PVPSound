@@ -38,15 +38,63 @@ end
 local eventMap = {}
 local BGFrame = CreateFrame("Frame", "BGFrame", nil)
 
-BGFrame:SetScript("OnEvent", function(frame, event, ...)
-		for k, v in pairs(eventMap[event]) do
-			if type(v) == "function" then
-				v(event, ...)
-			else
-				k[v](k, event, ...)
-			end
+-- In 12.0+ some UI operations (including event registration on certain frames) can be blocked during combat lockdown.
+local function PVPS_InCombatLockdown()
+	return type(InCombatLockdown) == "function" and InCombatLockdown()
+end
+
+function API:_ScheduleDeferredFlush()
+	if self._deferredTimer == true then return end
+	self._deferredTimer = true
+	if type(C_Timer) == "table" and type(C_Timer.After) == "function" then
+		C_Timer.After(0.5, function() API:_FlushDeferred() end)
+	else
+		-- No timer API, try next frame via OnUpdate
+		if not self._deferredOnUpdateFrame then
+			local f = CreateFrame("Frame")
+			f:SetScript("OnUpdate", function()
+				f:SetScript("OnUpdate", nil)
+				API:_FlushDeferred()
+			end)
+			self._deferredOnUpdateFrame = f
 		end
-	end)
+	end
+end
+
+function API:_FlushDeferred()
+	if PVPS_InCombatLockdown() then
+		self._deferredTimer = false
+		self:_ScheduleDeferredFlush()
+		return
+	end
+
+	self._deferredTimer = false
+	if not self._deferred then return end
+	local pending = self._deferred
+	self._deferred = nil
+
+	-- Apply deferred registrations/unregistrations now that combat lockdown is over.
+	for _, op in ipairs(pending) do
+		if op.action == "reg" then
+			pcall(function() BGFrame:RegisterEvent(op.event) end)
+		elseif op.action == "unreg" then
+			pcall(function() BGFrame:UnregisterEvent(op.event) end)
+		end
+	end
+end
+
+
+BGFrame:SetScript("OnEvent", function(frame, event, ...)
+	local map = eventMap[event]
+	if not map then return end
+	for k, v in pairs(map) do
+		if type(v) == "function" then
+			v(event, ...)
+		else
+			k[v](k, event, ...)
+		end
+	end
+end)
 
 
 function API:ShowRegisteredEvents()
@@ -74,6 +122,14 @@ function API:RegisterEvent(event, func)
 	end
 
 	if BGFrame then
+	-- Avoid registering events during combat lockdown (can cause ADDON_ACTION_FORBIDDEN in 12.0+).
+	if PVPS_InCombatLockdown() then
+		API._deferred = API._deferred or {}
+		table.insert(API._deferred, { action = "reg", event = event })
+		API:_ScheduleDeferredFlush()
+		return true
+	end
+
 		BGFrame:RegisterEvent(event)
 		if not eventMap[event] then eventMap[event] = {} end
 		eventMap[event][self] = func or event
@@ -87,6 +143,15 @@ end
 function API:UnregisterEvent(event)
 	if BGFrame and (type(event) == "string") then
 		eventMap[event] = nil
+	-- Avoid unregistering events during combat lockdown (can cause UI action blocked/taint warnings).
+	if PVPS_InCombatLockdown() then
+		API._deferred = API._deferred or {}
+		table.insert(API._deferred, { action = "unreg", event = event })
+		API:_ScheduleDeferredFlush()
+		-- eventMap cleanup already done below; handler is guarded against nil eventMap[event]
+		return true
+	end
+
 		BGFrame:UnregisterEvent(event)
 		return true
 	elseif type(event) ~= "string" then
@@ -100,6 +165,17 @@ end
 
 function API:UnregisterAllEvents()
 	if BGFrame then
+		-- Avoid unregistering events during combat lockdown.
+		if PVPS_InCombatLockdown() then
+			API._deferred = API._deferred or {}
+			for k, _ in pairs(eventMap) do
+				table.insert(API._deferred, { action = "unreg", event = k })
+				eventMap[k] = nil
+			end
+			API:_ScheduleDeferredFlush()
+			return true
+		end
+
 		for k, v in pairs(eventMap) do
 			BGFrame:UnregisterEvent(k)
 			eventMap[k] = nil
@@ -187,7 +263,8 @@ function API:LoadModules(CurrentZoneId, InstanceType, CurrentInstId)
 		PVPSound:Debug("alternative loading")
 		for _, mod in pairs(PVPSound.modules) do
 			PVPSound:Debug(" try "..mod.name.." instId: "..tostring(mod.instId).." ;cur instanceId: "..(select(8, GetInstanceInfo())))
-			if mod.instId == CurrentInstId and not mod.loaded then
+			local curName = select(1, GetInstanceInfo())
+			if ((mod.instId ~= nil and mod.instId == CurrentInstId) or (curName ~= nil and mod.name ~= nil and string.lower(curName) == string.lower(mod.name))) and (mod.type == nil or mod.type == InstanceType) and not mod.loaded then
 				PVPSound:TimerReset()
 				PVPSound:KillersReset()
 				mod:Initialize()
@@ -232,31 +309,62 @@ end
 -----------------------------------
 -- BG and Arena Team announcer when BG starts
 function API:Announce(zone)
-	if zone == "BG" then
-		local MyFaction
-		-- 1 for Alliance
-		-- 0 for Horde
-		if PS.isRetail then
-			MyFaction = GetBattlefieldArenaFaction()
-		else
-			MyFaction = UnitFactionGroup("player")
-			if MyFaction == "Horde" then
-				MyFaction = 0
-			elseif MyFaction == "Alliance" then
-				MyFaction = 1
+	if zone == nil then return end
+	if PS_Announce == false then return end
+	if AnnouncePlayed == true then return end
+
+	-- Determine "effective" faction for the current match.
+	-- In 12.0+ (cross-faction / merc mode), UnitFactionGroup("player") may reflect your original faction,
+	-- not the team you're currently playing on.
+	local MyFaction = nil
+
+	if PS.isRetail == true then
+		-- 1) Scoreboard faction (most reliable once scores are available)
+		local okInfo, info = pcall(function()
+			if PVPSound and PVPSound.GetMyScoreInfo then
+				return PVPSound:GetMyScoreInfo()
 			end
+			return nil
+		end)
+		if okInfo and info and info.faction ~= nil then
+			MyFaction = info.faction
 		end
 
-		if MyFaction == 1 then
-			PVPSound:AddToQueue(PS.SoundPackDirectory.."\\"..PS_SoundPackLanguage.."\\GameStatus\\PlayYouAreOnBlue.mp3")
-		elseif MyFaction == 0 then
-			PVPSound:AddToQueue(PS.SoundPackDirectory.."\\"..PS_SoundPackLanguage.."\\GameStatus\\PlayYouAreOnRed.mp3")
+		-- 2) Arena/BG effective faction (can be nil briefly when first zoning in)
+		if MyFaction == nil and type(GetBattlefieldArenaFaction) == "function" then
+			MyFaction = GetBattlefieldArenaFaction()
 		end
-	elseif zone == "Arena" then
-		PVPSound:AddToQueue(PS.SoundPackDirectory.."\\"..PS_SoundPackLanguage.."\\GameStatus\\PrepareForBattle.mp3")
-	else
-		return false
 	end
+
+	-- 3) Fallback to original faction
+	if MyFaction == nil then
+		_, MyFaction = UnitFactionGroup("player")
+	end
+
+	-- If we still can't resolve the effective faction yet (common on initial zone-in),
+	-- retry a few times before giving up.
+	if zone == "BG" and (MyFaction == nil or (UnitIsMercenary and UnitIsMercenary("player") and type(MyFaction) == "string")) then
+		API._bgAnnounceRetryCount = (API._bgAnnounceRetryCount or 0) + 1
+		if API._bgAnnounceRetryCount <= 12 then
+			if type(C_Timer) == "table" and type(C_Timer.After) == "function" then
+				C_Timer.After(0.5, function() API:Announce(zone) end)
+			end
+			return
+		end
+	end
+	API._bgAnnounceRetryCount = 0
+
+			-- Alliance (blue)
+			if MyFaction == 1 then
+				PVPSound:AddToQueue(PS.SoundPackDirectory .. "\\" .. PS_SoundPackLanguage .. "\\Zone_WintergraspBattlefield\\YouAreOnBlueTeam.mp3")
+				PVPSound:AddToSct("Blue Team", "You Are On Blue Team", "KILL")
+			-- Horde (red)
+			elseif MyFaction == 0 then
+				PVPSound:AddToQueue(PS.SoundPackDirectory .. "\\" .. PS_SoundPackLanguage .. "\\Zone_WintergraspBattlefield\\YouAreOnRedTeam.mp3")
+				PVPSound:AddToSct("Red Team", "You Are On Red Team", "KILL")
+			end
+
+	AnnouncePlayed = true
 end
 
 -- winner announcer

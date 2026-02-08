@@ -11,16 +11,58 @@ local PVPSound_NextSctUpdate 					= 0.3200
 
 local string, table, getglobal = string, table, getglobal
 
-local IsAddOnLoaded = IsAddOnLoaded
+-- WoW 11+/12+: prefer C_AddOns.* APIs; older globals may be nil.
+local function PVPSound_IsAddOnLoaded(name)
+	if type(C_AddOns) == "table" and type(C_AddOns.IsAddOnLoaded) == "function" then
+		local ok, loadedOrLoading, loaded = pcall(C_AddOns.IsAddOnLoaded, name)
+		if ok then
+			return loadedOrLoading or loaded
+		end
+	end
+	if type(_G.IsAddOnLoaded) == "function" then
+		local ok, loaded = pcall(_G.IsAddOnLoaded, name)
+		if ok then
+			return loaded
+		end
+	end
+	return false
+end
+
+local IsAddOnLoaded = PVPSound_IsAddOnLoaded
 local ChatTypeInfo = ChatTypeInfo
+
+-- Internal fallback message frame used when Blizzard combat text APIs are unavailable (12.0+).
+function PVPSound:EnsureInternalSctFrame()
+	if self._InternalSctFrame then return end
+
+	local f = CreateFrame("ScrollingMessageFrame", "PVPSound_InternalSctFrame", UIParent)
+	f:SetSize(800, 250)
+	f:SetPoint("CENTER", UIParent, "CENTER", 0, 200)
+
+	local font = STANDARD_TEXT_FONT or "Fonts\\FRIZQT__.TTF"
+	f:SetFont(font, 32, "OUTLINE")
+	f:SetJustifyH("CENTER")
+	f:SetJustifyV("MIDDLE")
+
+	f:SetFading(true)
+	f:SetFadeDuration(1.0)
+	f:SetTimeVisible(1.5)
+	f:SetMaxLines(20)
+	f:SetInsertMode("TOP")
+	f:SetFrameStrata("HIGH")
+	f:Show()
+
+	self._InternalSctFrame = f
+end
 
 -- Sct Queue
 function PVPSound:AddSctToQueue(killtype, file, message, frame)
 	-- This function will add file to the Sct Queue to be shown
 	-- If the file could not be found in the sound lengths table then just show it
 	-- This is a table of SoundLengths according to the selected SoundPack
+	if frame == nil then frame = "RaidWarning" end
 	if (PS_KillSoundPackName == "DevilMayCry" or PS_KillSoundPackName == "Dota2" or PS_KillSoundPackName == "Halo4" or PS_KillSoundPackName == "UnrealTournament3" or PS_KillSoundPackName == "Custom") and PS_SctEngine == true then
-		if killtype ~= nil and file ~= nil and message ~= nil and frame ~= nil then
+		if killtype ~= nil and file ~= nil and message ~= nil then
 			local SctSoundLengthTable = getglobal("PVPSound_"..PS.KillSoundPack..killtype.."Durations")
 			if SctSoundLengthTable ~= nil then
 				local SctFileFoundLength
@@ -43,7 +85,7 @@ function PVPSound:AddSctToQueue(killtype, file, message, frame)
 		end
 	else
 		-- We've got lengths for UnrealTournament3 and Custom SoundPacks only, if that's not selected or SoundEngine is disabled then just show it
-		if message ~= nil and frame ~= nil then
+		if message ~= nil then
 			PVPSound:AddToSct(message, frame)
 		end
 	end
@@ -58,7 +100,8 @@ end
 function PVPSound:AddToSct(message, frame)
 	if message == "nil" and frame ~= nil then
 		return false
-	elseif message ~= nil and frame ~= nil then
+	elseif message ~= nil and PS_SctEngine == true then
+		if frame == nil then frame = "RaidWarning" end
 		if PS_KillSct == true and PS_MultiKillSct == true and PS_PaybackSct == true then
 			PVPSound:TriggerSct(message.."!", frame)
 		elseif PS_KillSct == true and PS_MultiKillSct == true and PS_PaybackSct == false then
@@ -206,13 +249,24 @@ function PVPSound:TriggerSct(message, frame)
 	 -- Default Blizzard SCT
 	 -- CombatText_AddMessage(message, frame, colorR(0.00-1.00), colorG(0.00-1.00), colorB(0.00-1.00))
 	elseif IsAddOnLoaded("Blizzard_CombatText") then
-		if not COMBAT_TEXT_SCROLL_FUNCTION then
-			CombatText_UpdateDisplayedMessages()
+		-- 12.0+: Blizzard_CombatText may not expose CombatText_UpdateDisplayedMessages/COMBAT_TEXT_SCROLL_FUNCTION.
+		if type(_G.CombatText_AddMessage) == "function" and type(_G.COMBAT_TEXT_SCROLL_FUNCTION) == "function" then
+			_G.CombatText_AddMessage(message, _G.COMBAT_TEXT_SCROLL_FUNCTION, 1, 0, 0)
+		else
+			PVPSound:EnsureInternalSctFrame()
+			if PVPSound._InternalSctFrame then
+				PVPSound._InternalSctFrame:AddMessage(message, 1, 0, 0)
+				return
+			end
 		end
-		CombatText_AddMessage(message, COMBAT_TEXT_SCROLL_FUNCTION, 1, 0, 0)
 	 -- Raid Notice
 	 -- RaidNotice_AddMessage(frame, message, color)
 	else
+		PVPSound:EnsureInternalSctFrame()
+		if PVPSound._InternalSctFrame then
+			PVPSound._InternalSctFrame:AddMessage(message, 1, 0, 0)
+			return
+		end
 		RaidNotice_AddMessage(RaidBossEmoteFrame, message, ChatTypeInfo["RAID_WARNING"])
 	end
 end

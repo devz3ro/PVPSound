@@ -31,7 +31,10 @@ function PVPSoundOptions:OptionsInitalize(self)
 	self:SetBackdropBorderColor(0.9, 1.0, 0.9)
 	PVPSoundOptionsHeader:SetText("PVPSound "..PVPSound:GetAddonMetadata("Version"))
 	PVPSoundOptions:OptionsInitalizeButtons()
-	tinsert(UISpecialFrames, self:GetName())
+	-- NOTE (12.0+): do NOT touch UISpecialFrames. It taints secure ESC-close handling and can trigger
+	-- "PVPSound has been blocked from an action only available to the Blizzard UI" warnings.
+	-- Use the close button instead.
+	-- tinsert(UISpecialFrames, self:GetName())
 end
 
 function PVPSoundOptions:OptionsTabFramesInitalize(self)

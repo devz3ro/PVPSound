@@ -174,39 +174,25 @@ end
 local PVPSound_ScoreRequestElapsed = 0
 local PVPSound_LastScoreRequest = 0
 function PVPSound:LoadKills()
-	if PS_EnableAddon == true and (PS_KillSound == true or PS_MultiKillSound == true or PS_PaybackSound == true) then
-		if not PVPSoundFrameKills then
-			PVPSoundFrameKills = CreateFrame("Frame", nil)
-		end
+	if not PVPSoundFrameKills then
+		PVPSoundFrameKills = CreateFrame("Frame", nil)
+	end
 
-		-- Keep CLEU for PvE, but ignore it inside PvP instances (12.0+ restricts payload & can return secret values).
-		PVPSoundFrameKills:RegisterEvent("COMBAT_LOG_EVENT_UNFILTERED")
-
-		-- PvP / BG kill detection (12.0): PARTY_KILL event + scoreboard deltas
-		PVPSoundFrameKills:RegisterEvent("PARTY_KILL")
-		PVPSoundFrameKills:RegisterEvent("UPDATE_BATTLEFIELD_SCORE")
-		PVPSoundFrameKills:RegisterEvent("PLAYER_ENTERING_WORLD")
-		PVPSoundFrameKills:RegisterEvent("ZONE_CHANGED_NEW_AREA")
-
-		PVPSoundFrameKills:SetScript("OnEvent", PVPSound.OnEventKills)
-		PVPSoundFrameKills:SetScript("OnUpdate", function(_, elapsed)
-			PVPSound:KillsOnUpdate(elapsed)
-		end)
-
-		PVPSound:Debug("!Kills Events Loaded (CLEU+PARTY_KILL+SCORE)")
+	if (PS_KillSound == true or PS_MultiKillSound == true or PS_PaybackSound == true) and PS_EnableAddon == true then
+		-- WoW 12.0+: some clients can flag Frame:RegisterEvent() as protected for certain scoreboard events.
+		-- Polling the scoreboard avoids ADDON_ACTION_FORBIDDEN while keeping killing blow detection working.
+		PVPSoundFrameKills:SetScript("OnUpdate", function(_, elapsed) PVPSound:KillsOnUpdate(elapsed) end)
+		PVPSound:ResetScoreTracking()
+		PVPSound:Debug("Kills poller loaded")
+	else
+		PVPSound:Debug("Kills not enabled")
 	end
 end
-
 function PVPSound:UnloadKills()
 	if PVPSoundFrameKills then
 		if (PS_KillSound == false and PS_MultiKillSound == false and PS_PaybackSound == false) or PS_EnableAddon == false then
-			PVPSoundFrameKills:UnregisterEvent("COMBAT_LOG_EVENT_UNFILTERED")
-			PVPSoundFrameKills:UnregisterEvent("PARTY_KILL")
-			PVPSoundFrameKills:UnregisterEvent("UPDATE_BATTLEFIELD_SCORE")
-			PVPSoundFrameKills:UnregisterEvent("PLAYER_ENTERING_WORLD")
-			PVPSoundFrameKills:UnregisterEvent("ZONE_CHANGED_NEW_AREA")
 			PVPSoundFrameKills:SetScript("OnUpdate", nil)
-			PVPSound:Debug("!Kills Events Unloaded")
+			PVPSound:Debug("!Kills poller unloaded")
 		end
 	end
 end
@@ -265,21 +251,35 @@ function PVPSound:HandlePartyKill(killerGUID, victimGUID)
 end
 
 function PVPSound:KillsOnUpdate(elapsed)
+	if PS_EnableAddon == false then return end
+
 	local inInst, instType = IsInInstance()
 	if not (inInst and (instType == "pvp" or instType == "arena")) then
+		PVPSound._ScoreInInstance = nil
 		return
 	end
+	PVPSound._ScoreInInstance = true
 
-	-- Throttle score requests (needed for UPDATE_BATTLEFIELD_SCORE events to keep firing)
+	-- Reset tracking on instance/map changes (prevents stale deltas when queueing/porting).
+	local mapID = (C_Map and C_Map.GetBestMapForUnit) and C_Map.GetBestMapForUnit("player") or nil
+	if PVPSound._ScoreLastMapID ~= mapID or PVPSound._ScoreLastInstType ~= instType then
+		PVPSound._ScoreLastMapID = mapID
+		PVPSound._ScoreLastInstType = instType
+		PVPSound:ResetScoreTracking()
+	end
+
 	PVPSound_ScoreRequestElapsed = PVPSound_ScoreRequestElapsed + elapsed
-	if PVPSound_ScoreRequestElapsed < 1.0 then
+	if PVPSound_ScoreRequestElapsed < 0.5 then
 		return
 	end
 	PVPSound_ScoreRequestElapsed = 0
 
-	if RequestBattlefieldScoreData then
-		RequestBattlefieldScoreData()
+	if type(RequestBattlefieldScoreData) == "function" then
+		pcall(RequestBattlefieldScoreData)
 	end
+
+	-- Without UPDATE_BATTLEFIELD_SCORE events (12.0 restrictions), we compute deltas by polling.
+	PVPSound:HandleScoreUpdate()
 end
 
 function PVPSound:GetMyScoreInfo()
@@ -543,6 +543,9 @@ function PVPSound:DefaultSettings()
 	if PS_SctEngine == nil then
 		PS_SctEngine = true
 	end
+	if PS_ShowKillTextWithName == nil then
+		PS_ShowKillTextWithName = true
+	end
 	-- Intended name
 	if PSSctFrame == nil then
 		if MikSBT then
@@ -556,6 +559,9 @@ function PVPSound:DefaultSettings()
 		elseif xCT_Plus then
 			PSSctFrame = "General"
 		end
+	end
+	if PSSctFrame == nil then
+		PSSctFrame = "RaidWarning"
 	end
 	if PS_HideServerName == nil then
 		PS_HideServerName = true
@@ -1207,6 +1213,28 @@ function PVPSound:OnEventKills(event, ...)
 	end
 end
 
+function PVPSound:FormatKillAnnouncementText(baseText, killType, streakNumber)
+	-- Cosmetic: show the player's name alongside streak text (e.g. "Player got First Blood", "Player is Dominating")
+	if baseText == nil then return baseText end
+	if PS_ShowKillTextWithName ~= true then return baseText end
+
+	local playerName = UnitName("player")
+	if playerName == nil or playerName == "" then
+		return baseText
+	end
+
+	-- Keep it simple and mostly language-agnostic; only add a small helper verb for the most common case.
+	if killType == "Kill" then
+		if streakNumber == 1 then
+			return playerName .. " got " .. baseText
+		else
+			return playerName .. " is " .. baseText
+		end
+	end
+
+	return playerName .. " " .. baseText
+end
+
 function PVPSound:TriggerKill(killType, streakNumber)
 	if killType and streakNumber and streakNumber ~= 0 then
 		if killType == "Kill" then
@@ -1234,7 +1262,7 @@ function PVPSound:TriggerKill(killType, streakNumber)
 				end
 				-- Kill SCT
 				if PS_KillSct == true or PS_MultiKillSct == true or PS_PaybackSct == true then
-					PVPSound:AddSctToQueue(killType, KillLengthTable[streakNumber].dir, KillLengthTable[streakNumber].name, PSSctFrame)
+					PVPSound:AddSctToQueue(killType, KillLengthTable[streakNumber].dir, PVPSound:FormatKillAnnouncementText(KillLengthTable[streakNumber].name, killType, streakNumber), PSSctFrame)
 				end
 			end
 		elseif killType == "MultiKill" then
@@ -1255,7 +1283,7 @@ function PVPSound:TriggerKill(killType, streakNumber)
 				end
 				-- Multi Kill SCT
 				if PS_KillSct == true or PS_MultiKillSct == true or PS_PaybackSct == true then
-					PVPSound:AddSctToQueue(killType, MultiKillLengthTable[streakNumber].dir, MultiKillLengthTable[streakNumber].name, PSSctFrame)
+					PVPSound:AddSctToQueue(killType, MultiKillLengthTable[streakNumber].dir, PVPSound:FormatKillAnnouncementText(MultiKillLengthTable[streakNumber].name, killType, streakNumber), PSSctFrame)
 				end
 			end
 		elseif killType == "PaybackKill" then
@@ -1270,7 +1298,7 @@ function PVPSound:TriggerKill(killType, streakNumber)
 			end
 			-- Payback Kill SCT
 			if PS_KillSct == true or PS_MultiKillSct == true or PS_PaybackSct == true then
-				PVPSound:AddSctToQueue(killType, PaybackKillLengthTable[streakNumber].dir, PaybackKillLengthTable[streakNumber].name, PSSctFrame)
+				PVPSound:AddSctToQueue(killType, PaybackKillLengthTable[streakNumber].dir, PVPSound:FormatKillAnnouncementText(PaybackKillLengthTable[streakNumber].name, killType, streakNumber), PSSctFrame)
 			end
 		end
 	end
