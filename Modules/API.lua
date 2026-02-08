@@ -171,7 +171,7 @@ function API:LoadModules(CurrentZoneId, InstanceType, CurrentInstId)
 	-- Arenas module doesn't have real zoneId field (-1), so it will be loaded only by zone type check
 	local loadedAddonsCheck = false
 	-- loading by zoneId
-	if CurrentZoneId and PVPSound.modules[CurrentZoneId] and InstanceType == PVPSound.modules[CurrentZoneId].type and not PVPSound.modules[CurrentZoneId] then
+	if CurrentZoneId and PVPSound.modules[CurrentZoneId] and InstanceType == PVPSound.modules[CurrentZoneId].type and not PVPSound.modules[CurrentZoneId].loaded then
 		PVPSound:Debug("common loading")
 		PVPSound:TimerReset()
 		PVPSound:KillersReset()
@@ -237,11 +237,7 @@ function API:Announce(zone)
 		-- 1 for Alliance
 		-- 0 for Horde
 		if PS.isRetail then
-			local f = UnitFactionGroup("player")
-			if UnitIsMercenary and UnitIsMercenary("player") then
-				f = (f == "Alliance") and "Horde" or "Alliance"
-			end
-			MyFaction = (f == "Alliance") and 1 or 0
+			MyFaction = GetBattlefieldArenaFaction()
 		else
 			MyFaction = UnitFactionGroup("player")
 			if MyFaction == "Horde" then

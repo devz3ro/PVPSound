@@ -1,16 +1,4 @@
 local addon, ns = ...
-
--- file-local wrapper to handle Retail/Classic API for flag positions (surgical fix)
-local function PVPS_GetBattlefieldFlagPosition(index)
-    local uiMapId = C_Map and C_Map.GetBestMapForUnit and C_Map.GetBestMapForUnit("player") or nil
-    if PS and PS.isRetail and C_PvP and C_PvP.GetBattlefieldFlagPosition and uiMapId then
-        return C_PvP.GetBattlefieldFlagPosition(index, uiMapId)
-    end
-    if _G.GetBattlefieldFlagPosition then
-        return _G.GetBattlefieldFlagPosition(index)
-    end
-    return nil, nil, nil
-end
 local PVPSound = ns.PVPSound
 local PS = ns.PS
 local L = ns.L
@@ -217,11 +205,11 @@ function mod:CHAT_MSG_BG_SYSTEM_ALLIANCE(event, EventMessage)
 					break
 				end
 			else
-				local type = select(3, PVPS_GetBattlefieldFlagPosition(i))
+				local type = select(3, GetBattlefieldFlagPosition(i))
 
 				if type == 137218 then -- type for "AllianceFlag"
-					AllianceFlagPositionX = select(1, PVPS_GetBattlefieldFlagPosition(i))
-					AllianceFlagPositionY = select(2, PVPS_GetBattlefieldFlagPosition(i))
+					AllianceFlagPositionX = select(1, GetBattlefieldFlagPosition(i))
+					AllianceFlagPositionY = select(2, GetBattlefieldFlagPosition(i))
 					break
 				end
 			end
@@ -253,6 +241,10 @@ function mod:CHAT_MSG_BG_SYSTEM_ALLIANCE(event, EventMessage)
 		if MyFaction == "Alliance" and HordeFlagStatus == 0 then
 			if AllianceFlagPositionX and AllianceFlagPositionX ~= 0 and AllianceFlagPositionX ~= "" then
 				if AllianceFlagPositionY and AllianceFlagPositionY ~= 0 and AllianceFlagPositionY ~= "" then
+				if type(AllianceFlagPositionX) ~= "number" or type(AllianceFlagPositionY) ~= "number" then
+					if PS_Debug == true then PVPSound:Debug("WSG: flag coords are secret/non-number") end
+					return
+				end
 					if AllianceFlagPositionX >= 0.503 and AllianceFlagPositionX <= 0.545 then
 						if AllianceFlagPositionY >= 0.884 and AllianceFlagPositionY <= 0.934 then
 							PVPSound:AddToQueue(PS.SoundPackDirectory.."\\"..PS_SoundPackLanguage.."\\"..MyZone.."\\LastSecondSave.mp3")
@@ -296,11 +288,11 @@ function mod:CHAT_MSG_BG_SYSTEM_HORDE(event, EventMessage)
 					break
 				end
 			else
-				local type = select(3, PVPS_GetBattlefieldFlagPosition(i))
+				local type = select(3, GetBattlefieldFlagPosition(i))
 
 				if type == 137200 then -- type for "HordeFlag"
-					HordeFlagPositionX = select(1, PVPS_GetBattlefieldFlagPosition(i))
-					HordeFlagPositionY = select(2, PVPS_GetBattlefieldFlagPosition(i))
+					HordeFlagPositionX = select(1, GetBattlefieldFlagPosition(i))
+					HordeFlagPositionY = select(2, GetBattlefieldFlagPosition(i))
 					break
 				end
 			end

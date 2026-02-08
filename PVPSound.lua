@@ -170,23 +170,260 @@ function PVPSound:UnloadExecute()
 	end
 end
 
+
+local PVPSound_ScoreRequestElapsed = 0
+local PVPSound_LastScoreRequest = 0
 function PVPSound:LoadKills()
 	if PS_EnableAddon == true and (PS_KillSound == true or PS_MultiKillSound == true or PS_PaybackSound == true) then
 		if not PVPSoundFrameKills then
 			PVPSoundFrameKills = CreateFrame("Frame", nil)
 		end
+
+		-- Keep CLEU for PvE, but ignore it inside PvP instances (12.0+ restricts payload & can return secret values).
 		PVPSoundFrameKills:RegisterEvent("COMBAT_LOG_EVENT_UNFILTERED")
+
+		-- PvP / BG kill detection (12.0): PARTY_KILL event + scoreboard deltas
+		PVPSoundFrameKills:RegisterEvent("PARTY_KILL")
+		PVPSoundFrameKills:RegisterEvent("UPDATE_BATTLEFIELD_SCORE")
+		PVPSoundFrameKills:RegisterEvent("PLAYER_ENTERING_WORLD")
+		PVPSoundFrameKills:RegisterEvent("ZONE_CHANGED_NEW_AREA")
+
 		PVPSoundFrameKills:SetScript("OnEvent", PVPSound.OnEventKills)
-		PVPSound:Debug("!Kills Events Loaded")
+		PVPSoundFrameKills:SetScript("OnUpdate", function(_, elapsed)
+			PVPSound:KillsOnUpdate(elapsed)
+		end)
+
+		PVPSound:Debug("!Kills Events Loaded (CLEU+PARTY_KILL+SCORE)")
 	end
 end
 
 function PVPSound:UnloadKills()
 	if PVPSoundFrameKills then
-		if (PS_KillSound == false and PS_MultiKillSound == false and PS_PaybackSound == false) or  PS_EnableAddon == false then
+		if (PS_KillSound == false and PS_MultiKillSound == false and PS_PaybackSound == false) or PS_EnableAddon == false then
 			PVPSoundFrameKills:UnregisterEvent("COMBAT_LOG_EVENT_UNFILTERED")
+			PVPSoundFrameKills:UnregisterEvent("PARTY_KILL")
+			PVPSoundFrameKills:UnregisterEvent("UPDATE_BATTLEFIELD_SCORE")
+			PVPSoundFrameKills:UnregisterEvent("PLAYER_ENTERING_WORLD")
+			PVPSoundFrameKills:UnregisterEvent("ZONE_CHANGED_NEW_AREA")
+			PVPSoundFrameKills:SetScript("OnUpdate", nil)
 			PVPSound:Debug("!Kills Events Unloaded")
 		end
+	end
+end
+
+
+-- ===== WoW 12.0 PvP kill detection helpers (scoreboard + safe PARTY_KILL debug) =====
+
+function PVPSound:ResetScoreTracking()
+	PVPSound._LastKB = nil
+	PVPSound._LastDeaths = nil
+	PVPSound_ScoreRequestElapsed = 0
+	PVPSound_LastScoreRequest = 0
+end
+
+local function PVPSound_SafeToString(v)
+	if v == nil then return nil end
+	-- If the client provides secret-value helpers, try to scrub first
+	if type(scrubsecretvalues) == "function" then
+		local ok, t = pcall(scrubsecretvalues, { v })
+		if ok and type(t) == "table" then
+			v = t[1]
+		end
+	end
+	if v == nil then return nil end
+
+	local ok, s = pcall(tostring, v)
+	if ok then
+		return s
+	end
+	return nil
+end
+
+function PVPSound:HandlePartyKill(killerGUID, victimGUID)
+	-- Always log when debug is enabled (even if we don't use this for logic in BG/Arena)
+	if PS_Debug == true then
+		local ks = PVPSound_SafeToString(killerGUID) or "<secret>"
+		local vs = PVPSound_SafeToString(victimGUID) or "<secret>"
+		local kSecret = (type(issecretvalue) == "function" and issecretvalue(killerGUID)) and "true" or "false"
+		local vSecret = (type(issecretvalue) == "function" and issecretvalue(victimGUID)) and "true" or "false"
+		local inInst, instType = IsInInstance()
+		PVPSound:Debug("PARTY_KILL killer="..ks.." victim="..vs.." killerSecret="..kSecret.." victimSecret="..vSecret.." instType="..tostring(instType))
+	end
+
+	local inInst, instType = IsInInstance()
+	if inInst and (instType == "pvp" or instType == "arena") then
+		-- In BG/Arena, use scoreboard deltas only (safe + doesn't require comparing secret GUIDs).
+		return
+	end
+
+	-- Outside BG/Arena: if we can safely determine it's *your* killing blow, trigger the kill pipeline.
+	local my = UnitGUID("player")
+	local ks = PVPSound_SafeToString(killerGUID)
+	if ks and my and ks == my then
+		PVPSound:HandleKillingBlowInternal("PARTY_KILL")
+	end
+end
+
+function PVPSound:KillsOnUpdate(elapsed)
+	local inInst, instType = IsInInstance()
+	if not (inInst and (instType == "pvp" or instType == "arena")) then
+		return
+	end
+
+	-- Throttle score requests (needed for UPDATE_BATTLEFIELD_SCORE events to keep firing)
+	PVPSound_ScoreRequestElapsed = PVPSound_ScoreRequestElapsed + elapsed
+	if PVPSound_ScoreRequestElapsed < 1.0 then
+		return
+	end
+	PVPSound_ScoreRequestElapsed = 0
+
+	if RequestBattlefieldScoreData then
+		RequestBattlefieldScoreData()
+	end
+end
+
+function PVPSound:GetMyScoreInfo()
+	local my = UnitGUID("player")
+	if not my then return nil end
+
+	-- Preferred 12.0+ helper (if present)
+	if C_PvP and C_PvP.GetScoreInfoByPlayerGuid then
+		local ok, info = pcall(C_PvP.GetScoreInfoByPlayerGuid, my)
+		if ok and type(info) == "table" then
+			return info
+		end
+	end
+
+	-- Fallback: iterate scores
+	if C_PvP and C_PvP.GetScoreInfo and GetNumBattlefieldScores then
+		local n = GetNumBattlefieldScores()
+		for i = 1, n do
+			local info = C_PvP.GetScoreInfo(i)
+			if info and info.guid == my then
+				return info
+			end
+		end
+	end
+
+	return nil
+end
+
+function PVPSound:HandleScoreUpdate()
+	local inInst, instType = IsInInstance()
+	if not (inInst and (instType == "pvp" or instType == "arena")) then
+		return
+	end
+
+	local info = PVPSound:GetMyScoreInfo()
+	if not info then return end
+
+	local kb = info.killingBlows or 0
+	local deaths = info.deaths or 0
+
+	if PVPSound._LastKB == nil then
+		PVPSound._LastKB = kb
+		PVPSound._LastDeaths = deaths
+		return
+	end
+
+	local deltaKB = kb - (PVPSound._LastKB or 0)
+	PVPSound._LastKB = kb
+	PVPSound._LastDeaths = deaths
+
+	if deltaKB and deltaKB > 0 then
+		if PS_Debug == true then
+			PVPSound:Debug("SCORE_DELTA killingBlows +"..tostring(deltaKB).." total="..tostring(kb).." deaths="..tostring(deaths))
+		end
+		for _ = 1, deltaKB do
+			PVPSound:HandleKillingBlowInternal("SCORE")
+		end
+	end
+end
+
+function PVPSound:HandleKillingBlowInternal(source)
+	-- Minimal, safe killing-blow pipeline for 12.0 BG/Arena scoreboard deltas
+	-- NOTE: We do not have reliable victim identity here (12.0 secret-value restrictions),
+	-- so PaybackKill identity-based features are intentionally skipped.
+	local t = GetTime()
+
+	local KillSoundLengthTable = getglobal("PVPSound_"..PS.KillSoundPack.."KillDurations")
+	local maxKillRank = KillSoundLengthTable and table.getn(KillSoundLengthTable) or 10
+
+	-- First kill or after long reset
+	if LastKill == nil or (t - LastKill) > ResetTime or TimerReset == true then
+		CurrentStreak = 1
+		MultiKills = 1
+		PVPSound:TriggerKill("Kill", CurrentStreak)
+		LastKill = t
+		TimerReset = false
+		return
+	end
+
+	-- Streak rank (within KillTime)
+	if (t - LastKill) <= PS.KillTime then
+		CurrentStreak = (CurrentStreak or 1) + (1 / RankStep)
+		if CurrentStreak > maxKillRank then
+			CurrentStreak = maxKillRank
+		end
+		CurrentStreak = floor(CurrentStreak + 0.5)
+	else
+		CurrentStreak = 1
+	end
+
+	PVPSound:TriggerKill("Kill", CurrentStreak)
+
+	-- Multi-kill (within MultiKillTime)
+	if PS_MultiKillSound == true then
+		if (t - LastKill) <= MultiKillTime then
+			MultiKills = (MultiKills or 1) + 1
+
+			local MultiKillSoundLengthTable = getglobal("PVPSound_"..PS.KillSoundPack.."MultiKillDurations")
+			local maxMultiRank = MultiKillSoundLengthTable and table.getn(MultiKillSoundLengthTable) or 5
+
+			local rank = MultiKills - 1
+			if rank > maxMultiRank then rank = maxMultiRank end
+
+			if rank >= 1 then
+				PVPSound:TriggerKill("MultiKill", rank)
+			end
+		else
+			MultiKills = 1
+		end
+	end
+
+	LastKill = t
+end
+
+function PVPSound:DumpCurrentPOIs()
+	if not (C_Map and C_Map.GetBestMapForUnit and C_AreaPoiInfo and C_AreaPoiInfo.GetAreaPOIForMap and C_AreaPoiInfo.GetAreaPOIInfo) then
+		print("PVPSound: POI APIs not available")
+		return
+	end
+
+	local mapID = C_Map.GetBestMapForUnit("player")
+	if not mapID then
+		print("PVPSound: mapID unavailable")
+		return
+	end
+
+	local ids = C_AreaPoiInfo.GetAreaPOIForMap(mapID)
+	if not ids then
+		print("PVPSound: no POIs for map "..tostring(mapID))
+		return
+	end
+
+	print("PVPSound: POIs for map "..tostring(mapID).." ("..tostring(#ids)..")")
+	for _, id in ipairs(ids) do
+		local info = C_AreaPoiInfo.GetAreaPOIInfo(mapID, id)
+		local name = info and info.name or ""
+		local atlas = info and info.atlasName or ""
+		local tex = info and info.textureIndex or ""
+		print("  POI "..tostring(id).." name="..tostring(name).." atlas="..tostring(atlas).." textureIndex="..tostring(tex))
+	end
+
+	-- If a module for this map exists and exposes DumpPOIs(), call it too
+	if PVPSound.API and PVPSound.API.modules and PVPSound.API.modules[mapID] and PVPSound.API.modules[mapID].DumpPOIs then
+		PVPSound.API.modules[mapID]:DumpPOIs()
 	end
 end
 
@@ -280,6 +517,14 @@ function PVPSound:DefaultSettings()
 	if PS_KillSoundEngine == nil then
 		PS_KillSoundEngine = true
 	end
+	if PS_Debug == nil then
+		PS_Debug = false
+	end
+	if PS_PoiDebug == nil then
+		PS_PoiDebug = false
+	end
+	debug = PS_Debug
+
 	if PS_BattlegroundSoundEngine == nil then
 		PS_BattlegroundSoundEngine = true
 	end
@@ -387,8 +632,14 @@ end
 local debug = false
 -- Switch debug
 function PVPSound:SwitchDebug()
-	debug = not debug
+	PS_Debug = not PS_Debug
+	debug = PS_Debug
 	return debug
+end
+
+function PVPSound:SwitchPoiDebug()
+	PS_PoiDebug = not PS_PoiDebug
+	return PS_PoiDebug
 end
 -- Addon debug messages function
 function PVPSound:Debug(msg)
@@ -399,6 +650,30 @@ function PVPSound:Debug(msg)
 		print("|cFFff9a00PVPSound Debug:|r |cFF7FFF00"..msg.."|r")
 	end
 end
+
+-- Addon metadata compatibility (WoW 12.0 / The War Within)
+function PVPSound:GetAddonMetadata(field)
+	if not field then return "" end
+
+	-- Retail 12.0+ uses C_AddOns
+	if C_AddOns and C_AddOns.GetAddOnMetadata then
+		local ok, val = pcall(C_AddOns.GetAddOnMetadata, "PVPSound", field)
+		if ok and val ~= nil then
+			return val
+		end
+	end
+
+	-- Fallback for older clients / Classic
+	if GetAddOnMetadata then
+		local ok, val = pcall(GetAddOnMetadata, "PVPSound", field)
+		if ok and val ~= nil then
+			return val
+		end
+	end
+
+	return ""
+end
+
 
 --addon performanse info dump
 function PVPSound:perfDump()
@@ -504,7 +779,7 @@ function PVPSound:OnEvent(event, ...)
 			end
 			PVPSoundOptions:OptionsAddonIsLoaded()
 			-- Addon loaded message
-			-- print("|cFF50C0FFPVPSound |cFFFFA500"..PVPS_GetAddOnMetadata("PVPSound", "Version").."|cFF50C0FF loaded.|r")
+			-- print("|cFF50C0FFPVPSound |cFFFFA500"..GetAddOnMetadata("PVPSound", "Version").."|cFF50C0FF loaded.|r")
 		end
 	end
 end
@@ -685,6 +960,25 @@ local PS_COMBATLOG_FILTER_ENEMY_PLAYERS				= bit.bor(COMBATLOG_OBJECT_AFFILIATIO
 local PS_COMBATLOG_FILTER_ENEMY_PLAYERS_AND_NPCS	= bit.bor(COMBATLOG_OBJECT_AFFILIATION_MASK, COMBATLOG_OBJECT_REACTION_MASK, COMBATLOG_OBJECT_CONTROL_PLAYER, COMBATLOG_OBJECT_TYPE_PLAYER, COMBATLOG_OBJECT_CONTROL_NPC, COMBATLOG_OBJECT_TYPE_NPC)
 
 function PVPSound:OnEventKills(event, ...)
+
+	-- 12.0+: PARTY_KILL args can be "secret values" (restricted comparisons).
+	-- In BG/Arena, we rely on scoreboard deltas for personal killing blows.
+	if event == "PLAYER_ENTERING_WORLD" or event == "ZONE_CHANGED_NEW_AREA" then
+		PVPSound:ResetScoreTracking()
+		return
+	elseif event == "UPDATE_BATTLEFIELD_SCORE" then
+		PVPSound:HandleScoreUpdate()
+		return
+	elseif event == "PARTY_KILL" then
+		PVPSound:HandlePartyKill(...)
+		return
+	elseif event == "COMBAT_LOG_EVENT_UNFILTERED" then
+		local inInst, instType = IsInInstance()
+		if inInst and (instType == "pvp" or instType == "arena") then
+			-- Ignore CLEU inside PvP instances in 12.0 to avoid secret-value payload issues.
+			return
+		end
+	end
 	if PS_EnableAddon == true then
 		if event == "COMBAT_LOG_EVENT_UNFILTERED" then --no longer have payload
 			local _, eventType, sourceGUID, sourceName, sourceFlags, destGUID, destName, destFlags, swingOverkill, spellOverkill

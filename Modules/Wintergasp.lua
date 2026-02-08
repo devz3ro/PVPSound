@@ -179,11 +179,9 @@ local function AnnounceBG(zoneId)
 	--2150 - fortress in BF version, 6074 - in BG version
 	local textureIndex
 	if zoneId == 123 then
-		local info = C_AreaPoiInfo.GetAreaPOIInfo(zoneId, 2150)
-		textureIndex = info and info.textureIndex
+		textureIndex = C_AreaPoiInfo.GetAreaPOIInfo(zoneId,2150).textureIndex
 	else
-		local info = C_AreaPoiInfo.GetAreaPOIInfo(zoneId, 6074)
-		textureIndex = info and info.textureIndex
+		textureIndex = C_AreaPoiInfo.GetAreaPOIInfo(zoneId,6074).textureIndex
 	end
 	if textureIndex then
 		if textureIndex == 68 then
@@ -235,12 +233,10 @@ modBF.CHAT_MSG_RAID_BOSS_EMOTE = mod.CHAT_MSG_RAID_BOSS_EMOTE
 function mod:AREA_POIS_UPDATED()
 	local POIs = C_AreaPoiInfo.GetAreaPOIForMap(self.zoneId)
 	local destroyedWalls = 0
-	if not POIs or #POIs == 0 then return end
 	for i = 0, #POIs do
 		local type = WGget_objective(POIs[i])
 		if type and type ~= "TowerWalls" then
-			local info = C_AreaPoiInfo.GetAreaPOIInfo(self.zoneId, POIs[i])
-			local textureIndex = info and info.textureIndex
+			local textureIndex = C_AreaPoiInfo.GetAreaPOIInfo(self.zoneId,POIs[i]).textureIndex
 			if WGobj_state(WGobjectives[type]) == 1 and WGobj_state(textureIndex) == 3 then
 				PVPSound:AddToQueue(PS.SoundPackDirectory.."\\"..PS_SoundPackLanguage.."\\"..MyZone.."\\ALLIANCE_TowerNode_HeavilyDamaged.mp3")
 			elseif WGobj_state(WGobjectives[type]) == 3 and WGobj_state(textureIndex) == 4 then

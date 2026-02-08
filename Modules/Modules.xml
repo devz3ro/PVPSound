@@ -13,6 +13,7 @@
 	<Script file = "TempleofKotmogu.lua" />
 	<Script file = "SilvershardMines.lua" />
 	<Script file = "DeepwindGorge.lua" />
+	<Script file = "DeephaulRavine.lua" />
 	<Script file = "SeethingShore.lua" />
 	<Script file = "CookingImpossible.lua" />
 	<Script file = "TarrenMillvsSouthshore.lua" />
@@ -20,5 +21,4 @@
 	<Script file = "TolBarad.lua" />
 	<Script file = "Ashran.lua" />
 	<Script file = "Arenas.lua" />
-    <Script file = "DeephaulRavine.lua" />
 </Ui>

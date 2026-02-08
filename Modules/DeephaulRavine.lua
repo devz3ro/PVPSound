@@ -1,43 +1,62 @@
 local addon, ns = ...
 local PVPSound = ns.PVPSound
 local PS = ns.PS
-local L = ns.L
 
 local API = PVPSound.API
+
+-- Deephaul Ravine (The War Within)
+-- UIMapID: 2345
+-- InstanceID: 2656
 local mod = API:RegisterMod(2345, "pvp", "Deephaul Ravine", 2656)
 
-local MyZone = "Zone_SilvershardMines"
-
-function mod:CHAT_MSG_BG_SYSTEM_ALLIANCE(event, EventMessage)
-	if string.find(EventMessage, L["captured"]) then
-		PVPSound:AddToQueue(PS.SoundPackDirectory.."\\"..PS_SoundPackLanguage.."\\"..MyZone.."\\ALLIANCE_Scores.mp3")
+local function DumpPOIs()
+	if not C_AreaPoiInfo or not C_AreaPoiInfo.GetAreaPOIForMap or not C_AreaPoiInfo.GetAreaPOIInfo then
+		PVPSound:Debug("Deephaul: C_AreaPoiInfo API not available")
+		return
 	end
-end
 
-function mod:CHAT_MSG_BG_SYSTEM_HORDE(event, EventMessage)
-	if string.find(EventMessage, L["captured"]) then
-		PVPSound:AddToQueue(PS.SoundPackDirectory.."\\"..PS_SoundPackLanguage.."\\"..MyZone.."\\HORDE_Scores.mp3")
+	local ids = C_AreaPoiInfo.GetAreaPOIForMap(mod.zoneId)
+	if not ids then
+		PVPSound:Debug("Deephaul: no POIs returned for map "..tostring(mod.zoneId))
+		return
 	end
-end
 
-function mod:PVP_MATCH_COMPLETE(event, winner)
-	API:AnnounceWinner("BG", winner)
-	mod:Unload()
+	PVPSound:Debug("Deephaul: POIs for map "..tostring(mod.zoneId).." ("..tostring(#ids)..")")
+	for _, id in ipairs(ids) do
+		local info = C_AreaPoiInfo.GetAreaPOIInfo(mod.zoneId, id)
+		local name = info and info.name or ""
+		local atlas = info and info.atlasName or ""
+		local tex = info and info.textureIndex or ""
+		PVPSound:Debug("  POI "..tostring(id).." name="..tostring(name).." atlas="..tostring(atlas).." textureIndex="..tostring(tex))
+	end
 end
 
 function mod:Initialize()
-	API.RegisterEvent(self, "CHAT_MSG_BG_SYSTEM_ALLIANCE")
-	API.RegisterEvent(self, "CHAT_MSG_BG_SYSTEM_HORDE")
-	API.RegisterEvent(self, "PVP_MATCH_COMPLETE")
+	API.RegisterEvent(self, "AREA_POIS_UPDATED")
+
 	if not self.loaded then
 		API:Announce("BG")
 	end
+
 	self.loaded = true
+
+	if PS_PoiDebug == true then
+		DumpPOIs()
+	end
 end
 
 function mod:Unload()
-	API:UnregisterEvent("CHAT_MSG_BG_SYSTEM_ALLIANCE")
-	API:UnregisterEvent("CHAT_MSG_BG_SYSTEM_HORDE")
-	API:UnregisterEvent("PVP_MATCH_COMPLETE")
+	API:UnregisterAllEvents()
 	self.loaded = false
+end
+
+function mod:AREA_POIS_UPDATED()
+	if PS_PoiDebug == true then
+		DumpPOIs()
+	end
+end
+
+-- Expose helper for slash command dump
+function mod:DumpPOIs()
+	DumpPOIs()
 end

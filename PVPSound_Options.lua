@@ -29,7 +29,7 @@ function PVPSoundOptions:OptionsInitalize(self)
 	})
 	self:SetBackdropColor(0.1, 0.1, 0.1)
 	self:SetBackdropBorderColor(0.9, 1.0, 0.9)
-	PVPSoundOptionsHeader:SetText("PVPSound "..PVPS_GetAddOnMetadata("PVPSound", "Version"))
+	PVPSoundOptionsHeader:SetText("PVPSound "..PVPSound:GetAddonMetadata("Version"))
 	PVPSoundOptions:OptionsInitalizeButtons()
 	tinsert(UISpecialFrames, self:GetName())
 end
@@ -1611,6 +1611,15 @@ function PVPSound:SlashCommands(arg1)
 		PVPSoundOptions:OptionsToggleMenu()
 	elseif arg2 == "slash" then
 		PVPSound:PrintSlashMenu()
+	elseif arg2 == "debug" then
+		local enabled = PVPSound:SwitchDebug()
+		print("|cFF50C0FFDebug: |cFFFFFFA0"..tostring(enabled).."|r")
+	elseif arg2 == "poidebug" then
+		local enabled = PVPSound:SwitchPoiDebug()
+		print("|cFF50C0FFPOI Debug: |cFFFFFFA0"..tostring(enabled).."|r")
+	elseif arg2 == "dumppoi" then
+		PVPSound:DumpCurrentPOIs()
+
 	elseif arg2 == "enable" then
 		PS_EnableAddon = not PS_EnableAddon
 		if PS_EnableAddon == true then
@@ -2244,8 +2253,11 @@ function PVPSound:SlashCommands(arg1)
 end
 
 function PVPSound:PrintSlashHelp()
-	print("|cFFFFA500PVPSound "..PVPS_GetAddOnMetadata("PVPSound", "Version").." "..L["Command list"].."|r")
+	print("|cFFFFA500PVPSound "..PVPSound:GetAddonMetadata("Version").." "..L["Command list"].."|r")
 	print("|cFF50C0FF/ps - |cFFFFFFA0"..L["Show status"].."|r")
+	print("|cFF50C0FF/ps debug - |cFFFFFFA0Toggle debug logging|r")
+	print("|cFF50C0FF/ps poidebug - |cFFFFFFA0Toggle POI dump logging (BG objective mapping)|r")
+	print("|cFF50C0FF/ps dumppoi - |cFFFFFFA0Dump POI IDs for current map|r")
 	print("|cFF50C0FF/ps pvp, pve, pvpandpve - |cFFFFFFA0"..L["Switch between PVP and PVE mode"].."|r")
 	print("|cFF50C0FF/ps emote - |cFFFFFFA0"..L["Enables or Disables Emotes completely"].."|r")
 	print("|cFF50C0FF/ps emotemode - |cFFFFFFA0"..L["Switch between Emote and Chat Message mode"].."|r")
@@ -2278,7 +2290,7 @@ function PVPSound:PrintSlashHelp()
 end
 
 function PVPSound:PrintSlashMenu()
-	print("|cFFFFA500PVPSound "..PVPS_GetAddOnMetadata("PVPSound", "Version").." "..L["Loaded. Type /ps help for options"].."|r")
+	print("|cFFFFA500PVPSound "..PVPSound:GetAddonMetadata("Version").." "..L["Loaded. Type /ps help for options"].."|r")
 	if PS_Mode == "PVP" then
 		print("|cFF50C0FF"..L["Mode"]..": |cFFADFF2F"..L["[PVP]"].."|r")
 	elseif PS_Mode == "PVE" then
