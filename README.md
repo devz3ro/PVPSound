@@ -1,10 +1,10 @@
-# PVPSound 11.2.5
+# PVPSound 12.0.0
 
 My attempt to fix some of the lua errors using this addon with the latest World of Warcraft expansion (current game version 11.2.5).
 
 Based off of PVPSound version 6.0.0 which last worked with game version 10.2.5.
 
-Have errors yourself? Install both addons "BugSack" and "BugGrabber" from somewhere like curseforge, then attach the lua error logs in the Issues section.
+Have errors yourself? Type "/ps debug" in game to capture the errors, then open up a issue here on github with the logs.
 
-Note 1: The "Sounds" directory is in archive [Sounds.zip](https://gofile.io/d/WWJdBy), you will need to decompress it and place it in the PVPSound directory in your addons folder.  
+Note 1: The "Sounds" directory is in archive [Sounds.zip](https://www.dropbox.com/scl/fi/g8ejxoqhf2o99fsho0c0h/Sounds.zip?rlkey=ximhpf5ulpqdqso5ivrcephez&st=iujdywsx&dl=1), you will need to decompress it and place it in the PVPSound directory in your addons folder.  
 Note 2: Do not use this addon with the "WarCult" addon.
