@@ -117,8 +117,13 @@ function API:RegisterEvent(event, func)
 		PVPSound:Error("RegisterEvent: module "..tostring(self).." don't have function named "..event)
 		return false
 	elseif func and type(func) ~= "function" then
-		PVPSound:Error("RegisterEvent: Function reference expected")
-		return false
+		-- [FIX] Allow string function names (Backward Compatibility)
+		if type(func) == "string" and self[func] then
+			func = self[func]
+		else
+			-- PVPSound:Error("RegisterEvent: Function reference expected")
+			return false
+		end
 	end
 
 	if BGFrame then
@@ -309,62 +314,47 @@ end
 -----------------------------------
 -- BG and Arena Team announcer when BG starts
 function API:Announce(zone)
-	if zone == nil then return end
+	-- [FIX] Debounce: Prevent double-announcements (5 second cooldown)
+	if self.LastAnnounce and (GetTime() - self.LastAnnounce < 5) then return end
+	self.LastAnnounce = GetTime()
+
 	if PS_Announce == false then return end
-	if AnnouncePlayed == true then return end
 
-	-- Determine "effective" faction for the current match.
-	-- In 12.0+ (cross-faction / merc mode), UnitFactionGroup("player") may reflect your original faction,
-	-- not the team you're currently playing on.
+	-- Smart Faction Detection
 	local MyFaction = nil
-
-	if PS.isRetail == true then
-		-- 1) Scoreboard faction (most reliable once scores are available)
-		local okInfo, info = pcall(function()
-			if PVPSound and PVPSound.GetMyScoreInfo then
-				return PVPSound:GetMyScoreInfo()
-			end
-			return nil
-		end)
-		if okInfo and info and info.faction ~= nil then
-			MyFaction = info.faction
-		end
-
-		-- 2) Arena/BG effective faction (can be nil briefly when first zoning in)
-		if MyFaction == nil and type(GetBattlefieldArenaFaction) == "function" then
-			MyFaction = GetBattlefieldArenaFaction()
-		end
+	local info = nil
+	
+	-- Try Scoreboard (Safe Call)
+	if PVPSound and PVPSound.GetMyScoreInfo then
+		local ok, res = pcall(function() return PVPSound:GetMyScoreInfo() end)
+		if ok and res then info = res end
 	end
-
-	-- 3) Fallback to original faction
-	if MyFaction == nil then
-		_, MyFaction = UnitFactionGroup("player")
-	end
-
-	-- If we still can't resolve the effective faction yet (common on initial zone-in),
-	-- retry a few times before giving up.
-	if zone == "BG" and (MyFaction == nil or (UnitIsMercenary and UnitIsMercenary("player") and type(MyFaction) == "string")) then
-		API._bgAnnounceRetryCount = (API._bgAnnounceRetryCount or 0) + 1
-		if API._bgAnnounceRetryCount <= 12 then
-			if type(C_Timer) == "table" and type(C_Timer.After) == "function" then
-				C_Timer.After(0.5, function() API:Announce(zone) end)
-			end
-			return
+	
+	if info and info.faction then
+		MyFaction = info.faction
+	else
+		-- Fallback to UnitFactionGroup
+		local fGroup = UnitFactionGroup("player")
+		if fGroup == "Alliance" then MyFaction = 1
+		elseif fGroup == "Horde" then MyFaction = 0
 		end
 	end
-	API._bgAnnounceRetryCount = 0
 
-			-- Alliance (blue)
-			if MyFaction == 1 then
-				PVPSound:AddToQueue(PS.SoundPackDirectory .. "\\" .. PS_SoundPackLanguage .. "\\Zone_WintergraspBattlefield\\YouAreOnBlueTeam.mp3")
-				PVPSound:AddToSct("Blue Team", "You Are On Blue Team", "KILL")
-			-- Horde (red)
-			elseif MyFaction == 0 then
-				PVPSound:AddToQueue(PS.SoundPackDirectory .. "\\" .. PS_SoundPackLanguage .. "\\Zone_WintergraspBattlefield\\YouAreOnRedTeam.mp3")
-				PVPSound:AddToSct("Red Team", "You Are On Red Team", "KILL")
-			end
+	-- Debug
+	-- print("|cFF00FF00[PVPSound]|r Announce: " .. tostring(zone))
 
-	AnnouncePlayed = true
+	-- Queue Sound
+	if zone == "BG" then
+		if MyFaction == 1 then
+			PVPSound:AddToQueue(PS.SoundPackDirectory .. "\\" .. PS_SoundPackLanguage .. "\\GameStatus\\PlayYouAreOnBlue.mp3")
+			PVPSound:AddToSct("Blue Team", "You Are On Blue Team", "KILL")
+		elseif MyFaction == 0 then
+			PVPSound:AddToQueue(PS.SoundPackDirectory .. "\\" .. PS_SoundPackLanguage .. "\\GameStatus\\PlayYouAreOnRed.mp3")
+			PVPSound:AddToSct("Red Team", "You Are On Red Team", "KILL")
+		end
+	elseif zone == "Arena" then
+		PVPSound:AddToQueue(PS.SoundPackDirectory.."\\"..PS_SoundPackLanguage.."\\GameStatus\\PrepareForBattle.mp3")
+	end
 end
 
 -- winner announcer

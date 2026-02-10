@@ -250,7 +250,7 @@ function PVPSound:TriggerSct(message, frame)
 	 -- CombatText_AddMessage(message, frame, colorR(0.00-1.00), colorG(0.00-1.00), colorB(0.00-1.00))
 	elseif IsAddOnLoaded("Blizzard_CombatText") then
 		-- 12.0+: Blizzard_CombatText may not expose CombatText_UpdateDisplayedMessages/COMBAT_TEXT_SCROLL_FUNCTION.
-		if type(_G.CombatText_AddMessage) == "function" and type(_G.COMBAT_TEXT_SCROLL_FUNCTION) == "function" then
+		if type(_G.CombatText_AddMessage) == "function" and _G.COMBAT_TEXT_SCROLL_FUNCTION then
 			_G.CombatText_AddMessage(message, _G.COMBAT_TEXT_SCROLL_FUNCTION, 1, 0, 0)
 		else
 			PVPSound:EnsureInternalSctFrame()

@@ -67,7 +67,8 @@ local function AnnounceCrystal(faction, state)
 	end
 end
 
-function mod:Setup()
+function mod:Initialize()
+	API:Announce("BG")
 	--Keep track of POIs
 	API:RegisterEvent("PLAYER_ENTERING_WORLD", self)
 	API:RegisterEvent("ZONE_CHANGED_NEW_AREA", self)
@@ -131,7 +132,7 @@ function mod:ZONE_CHANGED_NEW_AREA()
 end
 
 function mod:OnLoad()
-	mod:Setup()
+	mod:Initialize()
 end
 
 function mod:OnUnload()

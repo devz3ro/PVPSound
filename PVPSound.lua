@@ -177,15 +177,12 @@ function PVPSound:LoadKills()
 	if not PVPSoundFrameKills then
 		PVPSoundFrameKills = CreateFrame("Frame", nil)
 	end
-
+	-- [SAFE MODE] Polling Only. NO RegisterEvent.
 	if (PS_KillSound == true or PS_MultiKillSound == true or PS_PaybackSound == true) and PS_EnableAddon == true then
-		-- WoW 12.0+: some clients can flag Frame:RegisterEvent() as protected for certain scoreboard events.
-		-- Polling the scoreboard avoids ADDON_ACTION_FORBIDDEN while keeping killing blow detection working.
 		PVPSoundFrameKills:SetScript("OnUpdate", function(_, elapsed) PVPSound:KillsOnUpdate(elapsed) end)
 		PVPSound:ResetScoreTracking()
-		PVPSound:Debug("Kills poller loaded")
 	else
-		PVPSound:Debug("Kills not enabled")
+		PVPSoundFrameKills:SetScript("OnUpdate", nil)
 	end
 end
 function PVPSound:UnloadKills()
@@ -205,8 +202,12 @@ function PVPSound:ResetScoreTracking()
 	PVPSound._LastDeaths = nil
 	PVPSound_ScoreRequestElapsed = 0
 	PVPSound_LastScoreRequest = 0
+	-- NEW: Initialize Kill Stat baseline for Fast Path
+	-- (1487 is Total Killing Blows, 1 is the criteria index)
+	local _, _, _, _, _, _, _, _, killCount = GetAchievementCriteriaInfoByID(1487, 0)
+	PVPSound._LastKillStat = killCount or 0
+	PVPSound._FastKillTimestamp = 0
 end
-
 local function PVPSound_SafeToString(v)
 	if v == nil then return nil end
 	-- If the client provides secret-value helpers, try to scrub first
@@ -226,30 +227,45 @@ local function PVPSound_SafeToString(v)
 end
 
 function PVPSound:HandlePartyKill(killerGUID, victimGUID)
-	-- Always log when debug is enabled (even if we don't use this for logic in BG/Arena)
-	if PS_Debug == true then
-		local ks = PVPSound_SafeToString(killerGUID) or "<secret>"
-		local vs = PVPSound_SafeToString(victimGUID) or "<secret>"
-		local kSecret = (type(issecretvalue) == "function" and issecretvalue(killerGUID)) and "true" or "false"
-		local vSecret = (type(issecretvalue) == "function" and issecretvalue(victimGUID)) and "true" or "false"
-		local inInst, instType = IsInInstance()
-		PVPSound:Debug("PARTY_KILL killer="..ks.." victim="..vs.." killerSecret="..kSecret.." victimSecret="..vSecret.." instType="..tostring(instType))
+	-- [12.0 Fix] Helper to safely check secrets
+	local function IsSecret(val)
+		if type(issecretvalue) == "function" then return issecretvalue(val) end
+		return false
 	end
 
-	local inInst, instType = IsInInstance()
-	if inInst and (instType == "pvp" or instType == "arena") then
-		-- In BG/Arena, use scoreboard deltas only (safe + doesn't require comparing secret GUIDs).
-		return
+	-- 1. Check "Total Killing Blows" Statistic (ID 1487, Criteria 1)
+	local _, _, _, _, _, _, _, _, currentKillStat = GetAchievementCriteriaInfoByID(1487, 0)
+	currentKillStat = currentKillStat or 0
+	
+	if not PVPSound._LastKillStat then PVPSound._LastKillStat = currentKillStat end
+
+	local statIncreased = currentKillStat > PVPSound._LastKillStat
+	
+	-- 2. Determine if it was OUR kill
+	local isMyKill = false
+	local myGUID = UnitGUID("player")
+
+	-- Check A: Explicit GUID match (Only if not secret)
+	if not IsSecret(killerGUID) and killerGUID == myGUID then
+		isMyKill = true
+	-- Check B: Stat increased (Works even if secret)
+	elseif statIncreased then
+		isMyKill = true
 	end
 
-	-- Outside BG/Arena: if we can safely determine it's *your* killing blow, trigger the kill pipeline.
-	local my = UnitGUID("player")
-	local ks = PVPSound_SafeToString(killerGUID)
-	if ks and my and ks == my then
+	-- 3. Trigger and Sync
+	if isMyKill then
+		if PS_Debug then PVPSound:Debug("FAST PATH: Kill Detected via " .. (statIncreased and "Stat" or "GUID")) end
+		
+		-- Update stat baseline
+		PVPSound._LastKillStat = currentKillStat
+		
+		-- Set timestamp to deduplicate against the slow scoreboard update later
+		PVPSound._FastKillTimestamp = GetTime()
+		
 		PVPSound:HandleKillingBlowInternal("PARTY_KILL")
 	end
 end
-
 function PVPSound:KillsOnUpdate(elapsed)
 	if PS_EnableAddon == false then return end
 
@@ -331,15 +347,24 @@ function PVPSound:HandleScoreUpdate()
 	PVPSound._LastDeaths = deaths
 
 	if deltaKB and deltaKB > 0 then
-		if PS_Debug == true then
-			PVPSound:Debug("SCORE_DELTA killingBlows +"..tostring(deltaKB).." total="..tostring(kb).." deaths="..tostring(deaths))
+		-- DEDUPLICATION:
+		local now = GetTime()
+		if PVPSound._FastKillTimestamp and (now - PVPSound._FastKillTimestamp) < 3.0 then
+			if PS_Debug then PVPSound:Debug("SCORE_DELTA: Ignored duplicate (Fast Path handled it)") end
+			deltaKB = deltaKB - 1
+			PVPSound._FastKillTimestamp = 0 
 		end
-		for _ = 1, deltaKB do
-			PVPSound:HandleKillingBlowInternal("SCORE")
+
+		if deltaKB > 0 then
+			if PS_Debug == true then
+				PVPSound:Debug("SCORE_DELTA killingBlows +"..tostring(deltaKB).." total="..tostring(kb).." deaths="..tostring(deaths))
+			end
+			for _ = 1, deltaKB do
+				PVPSound:HandleKillingBlowInternal("SCORE")
+			end
 		end
 	end
 end
-
 function PVPSound:HandleKillingBlowInternal(source)
 	-- Minimal, safe killing-blow pipeline for 12.0 BG/Arena scoreboard deltas
 	-- NOTE: We do not have reliable victim identity here (12.0 secret-value restrictions),
@@ -1006,6 +1031,11 @@ function PVPSound:OnEventKills(event, ...)
 			-- PVP and PVE Mode
 			if PS_Mode == "PVP" then
 				ToEnemy = ToEnemyPlayer
+				-- [12.0 Fix] Allow PvE/NPC kills if we are NOT in a PvP instance
+				local inInst, instType = IsInInstance()
+				if not (inInst and (instType == "pvp" or instType == "arena")) then
+					ToEnemy = ToEnemyPlayer or ToEnemyNPC
+				end
 				FromEnemy = FromEnemyPlayer
 			elseif PS_Mode == "PVE" then
 				ToEnemy = ToEnemyNPC
@@ -1052,10 +1082,10 @@ function PVPSound:OnEventKills(event, ...)
 							elseif PS_EmoteMode == false then
 								if MyGender == "Male" then
 									local Message = L["Streak1Male"]
-									print("|cFFFFFF00"..sourceName.." "..Message.." "..KillSoundLengthTable[CurrentStreak].name.."!".."|r")
+									print("|cFFFF4500"..sourceName.." "..Message.." "..KillSoundLengthTable[CurrentStreak].name.."!".."|r")
 								elseif MyGender == "Female" then
 									local Message = L["Streak1Female"]
-									print("|cFFFFFF00"..sourceName.." "..Message.." "..KillSoundLengthTable[CurrentStreak].name.."!".."|r")
+									print("|cFFFF4500"..sourceName.." "..Message.." "..KillSoundLengthTable[CurrentStreak].name.."!".."|r")
 								end
 							end
 						end
@@ -1113,11 +1143,11 @@ function PVPSound:OnEventKills(event, ...)
 												Message = L["Streak10"]
 											end
 											if CurrentStreak < table.getn(KillSoundLengthTable) then
-												print("|cFFFFFF00"..sourceName.." "..Message.." "..KillSoundLengthTable[CurrentStreak].name.."!".."|r")
+												print("|cFFFF4500"..sourceName.." "..Message.." "..KillSoundLengthTable[CurrentStreak].name.."!".."|r")
 											elseif CurrentStreak == table.getn(KillSoundLengthTable) then
-												print("|cFFFFFF00"..sourceName.." "..Message.." "..KillSoundLengthTable[CurrentStreak].name.."!!!".."|r")
+												print("|cFFFF4500"..sourceName.." "..Message.." "..KillSoundLengthTable[CurrentStreak].name.."!!!".."|r")
 											else
-												print("|cFFFFFF00"..sourceName.." "..Message.." "..KillSoundLengthTable[table.getn(KillSoundLengthTable)].name.."!!!".."|r")
+												print("|cFFFF4500"..sourceName.." "..Message.." "..KillSoundLengthTable[table.getn(KillSoundLengthTable)].name.."!!!".."|r")
 											end
 										end
 									end
@@ -1302,4 +1332,39 @@ function PVPSound:TriggerKill(killType, streakNumber)
 			end
 		end
 	end
+end
+
+
+
+-- [FORCE PATCH: VISUALS & SAFETY]
+_G["PVPSound"] = PVPSound
+
+-- 1. FORCE SETTINGS (Visuals)
+local oldDefaultSettings = PVPSound.DefaultSettings
+function PVPSound:DefaultSettings()
+	if oldDefaultSettings then oldDefaultSettings(self) end
+	PS_Emote = true
+	PS_EmoteMode = false -- Local Print
+end
+
+-- 2. SMART ANNOUNCE (Faction Fix)
+SLASH_PSANNOUNCE1 = "/psannounce"
+SlashCmdList["PSANNOUNCE"] = function(msg)
+	local info = PVPSound:GetMyScoreInfo()
+	local MyFaction = (info and info.faction) or (UnitFactionGroup("player") == "Alliance" and 1 or 0)
+	if MyFaction == 1 then
+		print("|cFF00FF00[PVPSound]|r Faction: Alliance -> Blue Team")
+		PVPSound:AddToQueue(PS.SoundPackDirectory.."\\Eng\\GameStatus\\PlayYouAreOnBlue.mp3")
+	else
+		print("|cFF00FF00[PVPSound]|r Faction: Horde -> Red Team")
+		PVPSound:AddToQueue(PS.SoundPackDirectory.."\\Eng\\GameStatus\\PlayYouAreOnRed.mp3")
+	end
+end
+
+-- 3. CRASH SAFETY (Scoreboard)
+function PVPSound:GetMyScoreInfo()
+	if C_PvP and C_PvP.GetScoreInfoByPlayerGuid then
+		return C_PvP.GetScoreInfoByPlayerGuid(UnitGUID("player"))
+	end
+	return nil
 end
