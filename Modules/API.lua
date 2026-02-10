@@ -87,11 +87,12 @@ end
 BGFrame:SetScript("OnEvent", function(frame, event, ...)
 	local map = eventMap[event]
 	if not map then return end
-	for k, v in pairs(map) do
+		for k, v in pairs(map) do
+		-- [FIX] Crash Shield: Use pcall to survive "Secret Value" errors in 12.0
 		if type(v) == "function" then
-			v(event, ...)
+			pcall(v, event, ...)
 		else
-			k[v](k, event, ...)
+			pcall(k[v], k, event, ...)
 		end
 	end
 end)
@@ -344,7 +345,7 @@ function API:Announce(zone)
 	-- print("|cFF00FF00[PVPSound]|r Announce: " .. tostring(zone))
 
 	-- Queue Sound
-	if zone == "BG" then
+	if zone == "BG" or zone == "Wintergrasp" or zone == "Tol Barad" or zone == "Ashran" then
 		if MyFaction == 1 then
 			PVPSound:AddToQueue(PS.SoundPackDirectory .. "\\" .. PS_SoundPackLanguage .. "\\GameStatus\\PlayYouAreOnBlue.mp3")
 			PVPSound:AddToSct("Blue Team", "You Are On Blue Team", "KILL")
@@ -360,7 +361,7 @@ end
 -- winner announcer
 -- type is BG or Arena
 function API:AnnounceWinner(zone, winner)
-	if zone == "BG" then
+	if zone == "BG" or zone == "Wintergrasp" or zone == "Tol Barad" or zone == "Ashran" then
 		if winner == 0 then
 			PVPSound:AddToQueue(PS.SoundPackDirectory.."\\"..PS_SoundPackLanguage.."\\GameStatus\\HordeWins.mp3")
 		elseif winner == 1 then
