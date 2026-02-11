@@ -1337,104 +1337,88 @@ function PVPSound:TriggerKill(killType, streakNumber)
 	end
 end
 
--- [FORCE PATCH: PVP STRICT MODE]
+-- [FORCE PATCH: 12.0.1 OVERRIDE]
+-- The following functions overwrite the originals to fix 12.0 API Crashes.
 _G["PVPSound"] = PVPSound
 
--- 1. DISABLE STAT TRACKING (Stops PvE/Mob Kill Detection)
-function PVPSound:ResetScoreTracking() end
-function PVPSound:HandleScoreUpdate() end
-function PVPSound:HandlePartyKill() end
-
--- 2. SAFE STARTUP (Polling Only - No Crashes)
+-- 1. SAFE STARTUP (Fixes RegisterEvent Crash)
 function PVPSound:LoadKills()
     if not PVPSoundFrameKills then
         PVPSoundFrameKills = CreateFrame("Frame", nil)
     end
-    -- Only use polling for background tasks, NOT for event registration
-    if PS_EnableAddon == true then
+
+    if (PS_KillSound == true or PS_MultiKillSound == true or PS_PaybackSound == true) and PS_EnableAddon == true then
+        -- [FIX] Polling Mode Only. NO RegisterEvent allowed here.
         PVPSoundFrameKills:SetScript("OnUpdate", function(_, elapsed) PVPSound:KillsOnUpdate(elapsed) end)
+        PVPSound:ResetScoreTracking()
     else
         PVPSoundFrameKills:SetScript("OnUpdate", nil)
     end
 end
 
--- 3. SAFE FACTION CHECK (Fixes Secret Value Crash)
-function PVPSound:GetMyScoreInfo() return nil end
+-- 2. SAFE RESET (Fixes Secret Value Crash)
+function PVPSound:ResetScoreTracking()
+    PVPSound._LastDeaths = nil
+    PVPSound_ScoreRequestElapsed = 0
+    PVPSound_LastScoreRequest = 0
+    -- [FIX] Seed with Achievement Stat 1487 (Safe Public Value)
+    local _, _, _, _, _, _, _, _, killCount = GetAchievementCriteriaInfoByID(1487, 0)
+    PVPSound._LastKillStat = killCount or 0
+    PVPSound._FastKillTimestamp = 0
+end
 
--- 4. UNLOCKED COMBAT LOG LOGIC
--- This replaces the original handler. It REMOVES the code that disabled CLEU in BGs.
-function PVPSound:OnEventKills(event, ...)
-    if PS_EnableAddon ~= true then return end
+-- 3. SAFE SCORE UPDATE (Fixes Arithmetic Crash)
+function PVPSound:HandleScoreUpdate()
+    local inInst, instType = IsInInstance()
+    if not (inInst and (instType == "pvp" or instType == "arena")) then return end
 
-    -- We strictly ignore Scoreboard/PartyKill events because they are Tainted or Noisy.
-    -- We ONLY process the Combat Log.
-    if event == "COMBAT_LOG_EVENT_UNFILTERED" then
-        local _, eventType, _, sourceGUID, sourceName, sourceFlags, _, destGUID, destName, destFlags, _, _, swingOverkill, _, _, spellOverkill = CombatLogGetCurrentEventInfo()
+    -- [FIX] Use Achievement API (Stat 1487) to bypass Secret Values
+    local _, _, _, _, _, _, _, _, currentKB = GetAchievementCriteriaInfoByID(1487, 0)
+    currentKB = currentKB or 0
 
-        -- Filter Setup (Crucial for PvP Only)
-        local ToEnemy = false
-        local ToEnemyPlayer = CombatLog_Object_IsA(destFlags, COMBATLOG_OBJECT_TYPE_PLAYER)
-        
-        -- Enforce PvP Mode Logic
-        if PS_Mode == "PVP" then
-            ToEnemy = ToEnemyPlayer -- STRICTLY Players Only
-        elseif PS_Mode == "PVE" then
-            ToEnemy = CombatLog_Object_IsA(destFlags, COMBATLOG_OBJECT_TYPE_NPC)
-        else -- PVPandPVE
-            ToEnemy = ToEnemyPlayer or CombatLog_Object_IsA(destFlags, COMBATLOG_OBJECT_TYPE_NPC)
-        end
-        
-        local FromMyPets = CombatLog_Object_IsA(sourceFlags, COMBATLOG_OBJECT_TYPE_PET) or CombatLog_Object_IsA(sourceFlags, COMBATLOG_OBJECT_TYPE_GUARDIAN)
-        
-        -- KILL DETECTION
-        -- Check 1: Player Kill (Party Kill event inside CLEU is safe)
-        if (eventType == "PARTY_KILL" and sourceGUID == UnitGUID("player") and ToEnemy)
-        -- Check 2: Pet Kill
-        or ((eventType == "SWING_DAMAGE" or eventType == "RANGE_DAMAGE" or eventType == "SPELL_DAMAGE") and FromMyPets and ToEnemy and (tonumber(swingOverkill) or tonumber(spellOverkill))) then
-            
-            -- Success! It's a valid PvP Kill.
-            if PVPSound:CheckRecentlyKilledQueue(destGUID) ~= true then
-                -- Trigger Sound/Text
-                local currentT = GetTime()
-                if not LastKill or (currentT - LastKill > ResetTime) then
-                    CurrentStreak = 1
-                    PVPSound:TriggerKill("Kill", CurrentStreak)
-                elseif (currentT - LastKill <= PS.KillTime) then
-                     CurrentStreak = (CurrentStreak or 1) + 1
-                     PVPSound:TriggerKill("Kill", CurrentStreak)
-                end
-                LastKill = currentT
-                PVPSound:AddToRecentlyKilledQueue(destGUID)
+    if PVPSound._LastKillStat == nil then
+        PVPSound._LastKillStat = currentKB
+        return
+    end
+
+    local deltaKB = currentKB - PVPSound._LastKillStat
+    PVPSound._LastKillStat = currentKB
+
+    if deltaKB > 0 then
+        -- Deduplication logic
+        local now = GetTime()
+        if PVPSound._FastKillTimestamp and (now - PVPSound._FastKillTimestamp) < 3.0 then
+            -- Skipped (Fast path handled it)
+        else
+            for i = 1, deltaKB do
+                PVPSound:HandleKillingBlowInternal("SCORE")
             end
         end
     end
 end
 
--- 5. SAFE LISTENER (The "Ears")
--- Registers the Combat Log on a clean, local frame to avoid Taint Crashes.
-local SafeListener = CreateFrame("Frame")
-SafeListener:RegisterEvent("PLAYER_ENTERING_WORLD")
-SafeListener:SetScript("OnEvent", function(self, event)
-    if event == "PLAYER_ENTERING_WORLD" then
-        -- Attempt to register CLEU. If blocked, it fails silently (No Crash).
-        pcall(function() self:RegisterEvent("COMBAT_LOG_EVENT_UNFILTERED") end)
-    elseif event == "COMBAT_LOG_EVENT_UNFILTERED" then
-        if PVPSound then PVPSound:OnEventKills(event) end
-    end
-end)
+-- 4. SAFE FACTION CHECK (Fixes Comparison Crash)
+function PVPSound:GetMyScoreInfo()
+    -- [FIX] Return nil to force usage of UnitFactionGroup
+    return nil
+end
 
--- 6. VISUALS & COMMANDS
+-- 5. SAFE VISUALS (Console Mode)
 local oldDefaultSettings = PVPSound.DefaultSettings
 function PVPSound:DefaultSettings()
     if oldDefaultSettings then oldDefaultSettings(self) end
     PS_Emote = true
-    PS_EmoteMode = false -- Console Mode
+    PS_EmoteMode = false -- Force Local Print
 end
 
+-- 6. RESTORE COMMAND (Fixes /psannounce)
 SLASH_PSANNOUNCE1 = "/psannounce"
 SlashCmdList["PSANNOUNCE"] = function(msg)
+    -- [FIX] Use UnitFactionGroup (Safe) instead of Scoreboard (Secret)
     local fGroup = UnitFactionGroup("player")
-    if fGroup == "Alliance" then
+    local isAlliance = (fGroup == "Alliance")
+
+    if isAlliance then
         print("|cFF00FF00[PVPSound]|r Faction: Alliance -> Blue Team")
         PVPSound:AddToQueue(PS.SoundPackDirectory.."\\Eng\\GameStatus\\PlayYouAreOnBlue.mp3")
     else
