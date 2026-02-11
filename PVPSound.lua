@@ -177,12 +177,15 @@ function PVPSound:LoadKills()
 	if not PVPSoundFrameKills then
 		PVPSoundFrameKills = CreateFrame("Frame", nil)
 	end
-	-- [SAFE MODE] Polling Only. NO RegisterEvent.
+
 	if (PS_KillSound == true or PS_MultiKillSound == true or PS_PaybackSound == true) and PS_EnableAddon == true then
+		-- WoW 12.0+: some clients can flag Frame:RegisterEvent() as protected for certain scoreboard events.
+		-- Polling the scoreboard avoids ADDON_ACTION_FORBIDDEN while keeping killing blow detection working.
 		PVPSoundFrameKills:SetScript("OnUpdate", function(_, elapsed) PVPSound:KillsOnUpdate(elapsed) end)
 		PVPSound:ResetScoreTracking()
+		PVPSound:Debug("Kills poller loaded")
 	else
-		PVPSoundFrameKills:SetScript("OnUpdate", nil)
+		PVPSound:Debug("Kills not enabled")
 	end
 end
 function PVPSound:UnloadKills()
@@ -1334,37 +1337,108 @@ function PVPSound:TriggerKill(killType, streakNumber)
 	end
 end
 
-
-
--- [FORCE PATCH: VISUALS & SAFETY]
+-- [FORCE PATCH: PVP STRICT MODE]
 _G["PVPSound"] = PVPSound
 
--- 1. FORCE SETTINGS (Visuals)
+-- 1. DISABLE STAT TRACKING (Stops PvE/Mob Kill Detection)
+function PVPSound:ResetScoreTracking() end
+function PVPSound:HandleScoreUpdate() end
+function PVPSound:HandlePartyKill() end
+
+-- 2. SAFE STARTUP (Polling Only - No Crashes)
+function PVPSound:LoadKills()
+    if not PVPSoundFrameKills then
+        PVPSoundFrameKills = CreateFrame("Frame", nil)
+    end
+    -- Only use polling for background tasks, NOT for event registration
+    if PS_EnableAddon == true then
+        PVPSoundFrameKills:SetScript("OnUpdate", function(_, elapsed) PVPSound:KillsOnUpdate(elapsed) end)
+    else
+        PVPSoundFrameKills:SetScript("OnUpdate", nil)
+    end
+end
+
+-- 3. SAFE FACTION CHECK (Fixes Secret Value Crash)
+function PVPSound:GetMyScoreInfo() return nil end
+
+-- 4. UNLOCKED COMBAT LOG LOGIC
+-- This replaces the original handler. It REMOVES the code that disabled CLEU in BGs.
+function PVPSound:OnEventKills(event, ...)
+    if PS_EnableAddon ~= true then return end
+
+    -- We strictly ignore Scoreboard/PartyKill events because they are Tainted or Noisy.
+    -- We ONLY process the Combat Log.
+    if event == "COMBAT_LOG_EVENT_UNFILTERED" then
+        local _, eventType, _, sourceGUID, sourceName, sourceFlags, _, destGUID, destName, destFlags, _, _, swingOverkill, _, _, spellOverkill = CombatLogGetCurrentEventInfo()
+
+        -- Filter Setup (Crucial for PvP Only)
+        local ToEnemy = false
+        local ToEnemyPlayer = CombatLog_Object_IsA(destFlags, COMBATLOG_OBJECT_TYPE_PLAYER)
+        
+        -- Enforce PvP Mode Logic
+        if PS_Mode == "PVP" then
+            ToEnemy = ToEnemyPlayer -- STRICTLY Players Only
+        elseif PS_Mode == "PVE" then
+            ToEnemy = CombatLog_Object_IsA(destFlags, COMBATLOG_OBJECT_TYPE_NPC)
+        else -- PVPandPVE
+            ToEnemy = ToEnemyPlayer or CombatLog_Object_IsA(destFlags, COMBATLOG_OBJECT_TYPE_NPC)
+        end
+        
+        local FromMyPets = CombatLog_Object_IsA(sourceFlags, COMBATLOG_OBJECT_TYPE_PET) or CombatLog_Object_IsA(sourceFlags, COMBATLOG_OBJECT_TYPE_GUARDIAN)
+        
+        -- KILL DETECTION
+        -- Check 1: Player Kill (Party Kill event inside CLEU is safe)
+        if (eventType == "PARTY_KILL" and sourceGUID == UnitGUID("player") and ToEnemy)
+        -- Check 2: Pet Kill
+        or ((eventType == "SWING_DAMAGE" or eventType == "RANGE_DAMAGE" or eventType == "SPELL_DAMAGE") and FromMyPets and ToEnemy and (tonumber(swingOverkill) or tonumber(spellOverkill))) then
+            
+            -- Success! It's a valid PvP Kill.
+            if PVPSound:CheckRecentlyKilledQueue(destGUID) ~= true then
+                -- Trigger Sound/Text
+                local currentT = GetTime()
+                if not LastKill or (currentT - LastKill > ResetTime) then
+                    CurrentStreak = 1
+                    PVPSound:TriggerKill("Kill", CurrentStreak)
+                elseif (currentT - LastKill <= PS.KillTime) then
+                     CurrentStreak = (CurrentStreak or 1) + 1
+                     PVPSound:TriggerKill("Kill", CurrentStreak)
+                end
+                LastKill = currentT
+                PVPSound:AddToRecentlyKilledQueue(destGUID)
+            end
+        end
+    end
+end
+
+-- 5. SAFE LISTENER (The "Ears")
+-- Registers the Combat Log on a clean, local frame to avoid Taint Crashes.
+local SafeListener = CreateFrame("Frame")
+SafeListener:RegisterEvent("PLAYER_ENTERING_WORLD")
+SafeListener:SetScript("OnEvent", function(self, event)
+    if event == "PLAYER_ENTERING_WORLD" then
+        -- Attempt to register CLEU. If blocked, it fails silently (No Crash).
+        pcall(function() self:RegisterEvent("COMBAT_LOG_EVENT_UNFILTERED") end)
+    elseif event == "COMBAT_LOG_EVENT_UNFILTERED" then
+        if PVPSound then PVPSound:OnEventKills(event) end
+    end
+end)
+
+-- 6. VISUALS & COMMANDS
 local oldDefaultSettings = PVPSound.DefaultSettings
 function PVPSound:DefaultSettings()
-	if oldDefaultSettings then oldDefaultSettings(self) end
-	PS_Emote = true
-	PS_EmoteMode = false -- Local Print
+    if oldDefaultSettings then oldDefaultSettings(self) end
+    PS_Emote = true
+    PS_EmoteMode = false -- Console Mode
 end
 
--- 2. SMART ANNOUNCE (Faction Fix)
 SLASH_PSANNOUNCE1 = "/psannounce"
 SlashCmdList["PSANNOUNCE"] = function(msg)
-	local info = PVPSound:GetMyScoreInfo()
-	local MyFaction = (info and info.faction) or (UnitFactionGroup("player") == "Alliance" and 1 or 0)
-	if MyFaction == 1 then
-		print("|cFF00FF00[PVPSound]|r Faction: Alliance -> Blue Team")
-		PVPSound:AddToQueue(PS.SoundPackDirectory.."\\Eng\\GameStatus\\PlayYouAreOnBlue.mp3")
-	else
-		print("|cFF00FF00[PVPSound]|r Faction: Horde -> Red Team")
-		PVPSound:AddToQueue(PS.SoundPackDirectory.."\\Eng\\GameStatus\\PlayYouAreOnRed.mp3")
-	end
-end
-
--- 3. CRASH SAFETY (Scoreboard)
-function PVPSound:GetMyScoreInfo()
-	if C_PvP and C_PvP.GetScoreInfoByPlayerGuid then
-		return C_PvP.GetScoreInfoByPlayerGuid(UnitGUID("player"))
-	end
-	return nil
+    local fGroup = UnitFactionGroup("player")
+    if fGroup == "Alliance" then
+        print("|cFF00FF00[PVPSound]|r Faction: Alliance -> Blue Team")
+        PVPSound:AddToQueue(PS.SoundPackDirectory.."\\Eng\\GameStatus\\PlayYouAreOnBlue.mp3")
+    else
+        print("|cFF00FF00[PVPSound]|r Faction: Horde -> Red Team")
+        PVPSound:AddToQueue(PS.SoundPackDirectory.."\\Eng\\GameStatus\\PlayYouAreOnRed.mp3")
+    end
 end
