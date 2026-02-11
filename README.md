@@ -9,4 +9,4 @@ Have errors yourself? Type "/ps debug" in game to capture the errors, then open 
 Note 1: The "Sounds" directory is in archive [Sounds.zip](https://www.dropbox.com/scl/fi/g8ejxoqhf2o99fsho0c0h/Sounds.zip?rlkey=ximhpf5ulpqdqso5ivrcephez&st=iujdywsx&dl=1), you will need to decompress it and place it in the PVPSound directory in your addons folder.  
 Note 2: Do not use this addon with the "WarCult" addon.
 
-Full addon here with sounds included: [PVPSound-12.0.1.1.zip](https://www.dropbox.com/scl/fi/0dmpb3iz4jtwmad8ygdpt/PVPSound.zip?rlkey=63pympt66obxj6bs03yz4k744&st=u2dhnjou&dl=1)
+Full addon here with sounds included: [PVPSound-12.0.1.1.zip](https://www.dropbox.com/scl/fi/1gve1rjfz504tyrfwzlef/PVPSound.zip?rlkey=rtjrsnhosmayixnckcuapw8er&st=xl2ernkk&dl=1)
