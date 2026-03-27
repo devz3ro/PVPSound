@@ -1,4 +1,4 @@
-﻿--[[
+--[[
 	   _          _     _         _        _           _      _          _
 	 _/\\___   _ /\\  _/\\___    /\\__  __/\\___  ___ /\\   _/\\___   __/\\___
 	(_   _ _))/ \\ \\(_   _ _)) /    \\(_     _))/  //\ \\ (_      ))(_  ____))
@@ -33,6 +33,7 @@ local print = print
 local select = select
 local string = string
 local table = table
+local unpack = table.unpack or unpack
 local tonumber = tonumber
 local tostring = tostring
 
@@ -205,67 +206,102 @@ function PVPSound:ResetScoreTracking()
 	PVPSound._LastDeaths = nil
 	PVPSound_ScoreRequestElapsed = 0
 	PVPSound_LastScoreRequest = 0
-	-- NEW: Initialize Kill Stat baseline for Fast Path
-	-- (1487 is Total Killing Blows, 1 is the criteria index)
+
 	local _, _, _, _, _, _, _, _, killCount = GetAchievementCriteriaInfoByID(1487, 0)
-	PVPSound._LastKillStat = killCount or 0
+	PVPSound._LastKillStat = PVPSound_SafeNumber(killCount) or 0
 	PVPSound._FastKillTimestamp = 0
 end
-local function PVPSound_SafeToString(v)
+
+local function PVPSound_ScrubSecretValue(v)
 	if v == nil then return nil end
-	-- If the client provides secret-value helpers, try to scrub first
+
 	if type(scrubsecretvalues) == "function" then
-		local ok, t = pcall(scrubsecretvalues, { v })
-		if ok and type(t) == "table" then
-			v = t[1]
+		local ok, scrubbed = pcall(scrubsecretvalues, v)
+		if ok then
+			if type(scrubbed) == "table" then
+				v = scrubbed[1]
+			else
+				v = scrubbed
+			end
+		else
+			local okTable, scrubbedTable = pcall(scrubsecretvalues, { v })
+			if okTable and type(scrubbedTable) == "table" then
+				v = scrubbedTable[1]
+			else
+				return nil
+			end
 		end
 	end
+
+	if v == nil then return nil end
+
+	if type(issecretvalue) == "function" then
+		local ok, isSecret = pcall(issecretvalue, v)
+		if ok and isSecret then
+			return nil
+		end
+	end
+
+	return v
+end
+
+function PVPSound_SafeNumber(v)
+	v = PVPSound_ScrubSecretValue(v)
+	if v == nil then return nil end
+	return tonumber(v)
+end
+
+local function PVPSound_SafeString(v)
+	v = PVPSound_ScrubSecretValue(v)
 	if v == nil then return nil end
 
 	local ok, s = pcall(tostring, v)
 	if ok then
 		return s
 	end
+
 	return nil
 end
 
-function PVPSound:HandlePartyKill(killerGUID, victimGUID)
-	-- [12.0 Fix] Helper to safely check secrets
-	local function IsSecret(val)
-		if type(issecretvalue) == "function" then return issecretvalue(val) end
-		return false
+local function PVPSound_GetSafeHealthPercent(unit)
+	local health = PVPSound_SafeNumber(UnitHealth(unit))
+	local maxHealth = PVPSound_SafeNumber(UnitHealthMax(unit))
+
+	if not health or not maxHealth or maxHealth <= 0 then
+		return nil
 	end
 
-	-- 1. Check "Total Killing Blows" Statistic (ID 1487, Criteria 1)
-	local _, _, _, _, _, _, _, _, currentKillStat = GetAchievementCriteriaInfoByID(1487, 0)
-	currentKillStat = currentKillStat or 0
-	
-	if not PVPSound._LastKillStat then PVPSound._LastKillStat = currentKillStat end
+	return health / maxHealth
+end
 
-	local statIncreased = currentKillStat > PVPSound._LastKillStat
-	
-	-- 2. Determine if it was OUR kill
+function PVPSound:HandlePartyKill(killerGUID, victimGUID)
+	local _, _, _, _, _, _, _, _, currentKillStatRaw = GetAchievementCriteriaInfoByID(1487, 0)
+	local currentKillStat = PVPSound_SafeNumber(currentKillStatRaw) or 0
+
+	if not PVPSound._LastKillStat then
+		PVPSound._LastKillStat = currentKillStat
+	end
+
+	local statIncreased = currentKillStat > (PVPSound._LastKillStat or 0)
+
 	local isMyKill = false
-	local myGUID = UnitGUID("player")
+	local myGUID = PVPSound_SafeString(UnitGUID("player"))
+	local killerGUIDSafe = PVPSound_SafeString(killerGUID)
 
-	-- Check A: Explicit GUID match (Only if not secret)
-	if not IsSecret(killerGUID) and killerGUID == myGUID then
+	if killerGUIDSafe and myGUID and killerGUIDSafe == myGUID then
 		isMyKill = true
-	-- Check B: Stat increased (Works even if secret)
 	elseif statIncreased then
 		isMyKill = true
 	end
 
-	-- 3. Trigger and Sync
 	if isMyKill then
-		if PS_Debug then PVPSound:Debug("FAST PATH: Kill Detected via " .. (statIncreased and "Stat" or "GUID")) end
-		
-		-- Update stat baseline
+		if PS_Debug then
+			PVPSound:Debug("FAST PATH: Kill Detected via " .. (statIncreased and "Stat" or "GUID"))
+		end
+
 		PVPSound._LastKillStat = currentKillStat
-		
-		-- Set timestamp to deduplicate against the slow scoreboard update later
 		PVPSound._FastKillTimestamp = GetTime()
-		
+
 		PVPSound:HandleKillingBlowInternal("PARTY_KILL")
 	end
 end
@@ -302,24 +338,30 @@ function PVPSound:KillsOnUpdate(elapsed)
 end
 
 function PVPSound:GetMyScoreInfo()
-	local my = UnitGUID("player")
-	if not my then return nil end
+	local myGUID = PVPSound_SafeString(UnitGUID("player"))
+	if not myGUID then return nil end
 
-	-- Preferred 12.0+ helper (if present)
 	if C_PvP and C_PvP.GetScoreInfoByPlayerGuid then
-		local ok, info = pcall(C_PvP.GetScoreInfoByPlayerGuid, my)
+		local ok, info = pcall(C_PvP.GetScoreInfoByPlayerGuid, myGUID)
 		if ok and type(info) == "table" then
-			return info
+			return {
+				guid = PVPSound_SafeString(info.guid),
+				killingBlows = PVPSound_SafeNumber(info.killingBlows),
+				deaths = PVPSound_SafeNumber(info.deaths),
+			}
 		end
 	end
 
-	-- Fallback: iterate scores
 	if C_PvP and C_PvP.GetScoreInfo and GetNumBattlefieldScores then
 		local n = GetNumBattlefieldScores()
 		for i = 1, n do
 			local info = C_PvP.GetScoreInfo(i)
-			if info and info.guid == my then
-				return info
+			if info and PVPSound_SafeString(info.guid) == myGUID then
+				return {
+					guid = myGUID,
+					killingBlows = PVPSound_SafeNumber(info.killingBlows),
+					deaths = PVPSound_SafeNumber(info.deaths),
+				}
 			end
 		end
 	end
@@ -333,34 +375,30 @@ function PVPSound:HandleScoreUpdate()
 		return
 	end
 
-	local info = PVPSound:GetMyScoreInfo()
-	if not info then return end
+	local _, _, _, _, _, _, _, _, currentKBRaw = GetAchievementCriteriaInfoByID(1487, 0)
+	local currentKB = PVPSound_SafeNumber(currentKBRaw) or 0
 
-	local kb = info.killingBlows or 0
-	local deaths = info.deaths or 0
-
-	if PVPSound._LastKB == nil then
-		PVPSound._LastKB = kb
-		PVPSound._LastDeaths = deaths
+	if PVPSound._LastKillStat == nil then
+		PVPSound._LastKillStat = currentKB
 		return
 	end
 
-	local deltaKB = kb - (PVPSound._LastKB or 0)
-	PVPSound._LastKB = kb
-	PVPSound._LastDeaths = deaths
+	local deltaKB = currentKB - (PVPSound._LastKillStat or 0)
+	PVPSound._LastKillStat = currentKB
 
 	if deltaKB and deltaKB > 0 then
-		-- DEDUPLICATION:
 		local now = GetTime()
 		if PVPSound._FastKillTimestamp and (now - PVPSound._FastKillTimestamp) < 3.0 then
-			if PS_Debug then PVPSound:Debug("SCORE_DELTA: Ignored duplicate (Fast Path handled it)") end
+			if PS_Debug then
+				PVPSound:Debug("SCORE_DELTA: Ignored duplicate (Fast Path handled it)")
+			end
 			deltaKB = deltaKB - 1
-			PVPSound._FastKillTimestamp = 0 
+			PVPSound._FastKillTimestamp = 0
 		end
 
 		if deltaKB > 0 then
 			if PS_Debug == true then
-				PVPSound:Debug("SCORE_DELTA killingBlows +"..tostring(deltaKB).." total="..tostring(kb).." deaths="..tostring(deaths))
+				PVPSound:Debug("SCORE_DELTA killingBlows +"..tostring(deltaKB).." total="..tostring(currentKB))
 			end
 			for _ = 1, deltaKB do
 				PVPSound:HandleKillingBlowInternal("SCORE")
@@ -864,6 +902,8 @@ function PVPSound:OnEventData(event, ...)
 		if event == "PLAYER_DEAD" then
 			local Channel = "INSTANCE_CHAT"
 
+			KilledBy = PVPSound_SafeString(KilledBy)
+
 			-- Death Data Share
 			if KilledBy ~= nil then
 				if PS_DataShare == true then
@@ -880,7 +920,7 @@ function PVPSound:OnEventData(event, ...)
 						else
 							GotKilledBy = tostring(KilledBy)
 						end
-						if IsInGroup(LE_PARTY_CATEGORY_INSTANCE) and IsInInstance() then --channel choose
+						if IsInGroup(LE_PARTY_CATEGORY_INSTANCE) and IsInInstance() then
 							if InstanceType == "pvp" or InstanceType == "arena" or InstanceType == "raid" or InstanceType == "party" or InstanceType == nil then
 								C_ChatInfo.SendAddonMessage("PVPSound", Message..":"..GotKilledBy, Channel)
 							end
@@ -889,14 +929,15 @@ function PVPSound:OnEventData(event, ...)
 						end
 					end
 				end
+
 				-- Death Messages
 				if PS_DeathMessage == true then
-					if string.sub(KilledBy, - 1) == "!" then
+					if string.sub(KilledBy, -1) == "!" then
 						GotKilledBy = string.sub(KilledBy, 1, string.len(KilledBy) - 1)
 					else
 						if string.find(KilledBy, "-") and PS_HideServerName ~= false then
 							GotKilledBy = tostring(string.match(KilledBy, "(.+)-"))
-							if string.find(GotKilledBy, "-") then
+							if GotKilledBy and string.find(GotKilledBy, "-") then
 								GotKilledBy = tostring(string.match(GotKilledBy, "(.+)-"))
 							end
 						else
@@ -916,17 +957,21 @@ function PVPSound:OnEventData(event, ...)
 end
 
 function PVPSound:OnEventExecute(event, ...)
-	if PS_EnableAddon == true  then
-		--execute sounds can not be places in ideology of kill or bg sounds
-		--because it is more about an dueling announcement
-		--so it can not be placed in any sound engine queues
-		--so i just play the sound file without a queues
+	if PS_EnableAddon == true then
+		-- execute sounds can not be places in ideology of kill or bg sounds
+		-- because it is more about an dueling announcement
+		-- so it can not be placed in any sound engine queues
+		-- so i just play the sound file without a queues
+
+		local unit = ...
+		if (event == "UNIT_HEALTH" or event == "UNIT_MAXHEALTH") and unit ~= "target" then
+			return
+		end
 
 		if (event == "PLAYER_TARGET_CHANGED" or event == "UNIT_HEALTH" or event == "UNIT_MAXHEALTH") and PS_Execute == true then
-			local isEnemy = UnitIsEnemy("target","player")
+			local isEnemy = UnitIsEnemy("target", "player")
 
 			if UnitExists("target") and isEnemy == true and UnitIsDeadOrGhost("target") == false then
-
 				local TargetGender
 				if UnitSex("target") == 1 then
 					TargetGender = "Unknown"
@@ -935,17 +980,20 @@ function PVPSound:OnEventExecute(event, ...)
 				elseif UnitSex("target") == 3 then
 					TargetGender = "Female"
 				end
-				local TargetHealthPercent = UnitHealth("target") / UnitHealthMax("target")
+
+				local TargetHealthPercent = PVPSound_GetSafeHealthPercent("target")
+				if not TargetHealthPercent then
+					return
+				end
+
 				if PS_Mode == "PVP" then
 					if UnitIsPlayer("target") == true then
 						local type = TargetHealthGetObjective(TargetHealthPercent)
 						if type then
 							if TargetHealthState(TargetHealthObjectives[type]) == 1 and TargetHealthState(TargetHealthPercent) == 2 then
 								if TargetGender == "Male" or TargetGender == "Unknown" then
-									--PVPSound:AddKillToQueue("Execute", PS.SoundPackDirectory.."\\"..PS_SoundPackLanguage.."\\Execute\\FinishHim.mp3")
 									PlaySoundFile("Interface\\Addons\\PVPSound\\Sounds\\MortalKombat\\Eng\\Execute\\FinishHim.mp3", PS_Channel)
 								elseif TargetGender == "Female" then
-									--PVPSound:AddKillToQueue("Execute", PS.SoundPackDirectory.."\\"..PS_SoundPackLanguage.."\\Execute\\FinishHer.mp3")
 									PlaySoundFile("Interface\\Addons\\PVPSound\\Sounds\\MortalKombat\\Eng\\Execute\\FinishHer.mp3", PS_Channel)
 								end
 							end
@@ -958,10 +1006,8 @@ function PVPSound:OnEventExecute(event, ...)
 						if type then
 							if TargetHealthState(TargetHealthObjectives[type]) == 1 and TargetHealthState(TargetHealthPercent) == 2 then
 								if TargetGender == "Male" or TargetGender == "Unknown" then
-									--PVPSound:AddKillToQueue("Execute", PS.SoundPackDirectory.."\\"..PS_SoundPackLanguage.."\\Execute\\FinishHim.mp3")
 									PlaySoundFile("Interface\\Addons\\PVPSound\\Sounds\\MortalKombat\\Eng\\Execute\\FinishHim.mp3", PS_Channel)
 								elseif TargetGender == "Female" then
-									--PVPSound:AddKillToQueue("Execute", PS.SoundPackDirectory.."\\"..PS_SoundPackLanguage.."\\Execute\\FinishHer.mp3")
 									PlaySoundFile("Interface\\Addons\\PVPSound\\Sounds\\MortalKombat\\Eng\\Execute\\FinishHer.mp3", PS_Channel)
 								end
 							end
@@ -973,16 +1019,16 @@ function PVPSound:OnEventExecute(event, ...)
 					if type then
 						if TargetHealthState(TargetHealthObjectives[type]) == 1 and TargetHealthState(TargetHealthPercent) == 2 then
 							if TargetGender == "Male" or TargetGender == "Unknown" then
-								--PVPSound:AddKillToQueue("Execute", PS.SoundPackDirectory.."\\"..PS_SoundPackLanguage.."\\Execute\\FinishHim.mp3")
 								PlaySoundFile("Interface\\Addons\\PVPSound\\Sounds\\MortalKombat\\Eng\\Execute\\FinishHim.mp3", PS_Channel)
 							elseif TargetGender == "Female" then
-								--PVPSound:AddKillToQueue("Execute", PS.SoundPackDirectory.."\\"..PS_SoundPackLanguage.."\\Execute\\FinishHer.mp3")
 								PlaySoundFile("Interface\\Addons\\PVPSound\\Sounds\\MortalKombat\\Eng\\Execute\\FinishHer.mp3", PS_Channel)
 							end
 						end
 						TargetHealthObjectives[type] = TargetHealthPercent
 					end
 				end
+			elseif UnitExists("target") ~= true then
+				TargetHealthObjectives = {Percent = nil}
 			end
 		end
 	end
@@ -994,8 +1040,7 @@ local PS_COMBATLOG_FILTER_ENEMY_PLAYERS				= bit.bor(COMBATLOG_OBJECT_AFFILIATIO
 local PS_COMBATLOG_FILTER_ENEMY_PLAYERS_AND_NPCS	= bit.bor(COMBATLOG_OBJECT_AFFILIATION_MASK, COMBATLOG_OBJECT_REACTION_MASK, COMBATLOG_OBJECT_CONTROL_PLAYER, COMBATLOG_OBJECT_TYPE_PLAYER, COMBATLOG_OBJECT_CONTROL_NPC, COMBATLOG_OBJECT_TYPE_NPC)
 
 function PVPSound:OnEventKills(event, ...)
-
-	-- 12.0+: PARTY_KILL args can be "secret values" (restricted comparisons).
+	-- 12.0+: PARTY_KILL args can be secret values (restricted comparisons).
 	-- In BG/Arena, we rely on scoreboard deltas for personal killing blows.
 	if event == "PLAYER_ENTERING_WORLD" or event == "ZONE_CHANGED_NEW_AREA" then
 		PVPSound:ResetScoreTracking()
@@ -1013,57 +1058,79 @@ function PVPSound:OnEventKills(event, ...)
 			return
 		end
 	end
-	if PS_EnableAddon == true then
-		if event == "COMBAT_LOG_EVENT_UNFILTERED" then --no longer have payload
-			local _, eventType, sourceGUID, sourceName, sourceFlags, destGUID, destName, destFlags, swingOverkill, spellOverkill
-			_, eventType, _, sourceGUID, sourceName, sourceFlags, _, destGUID, destName, destFlags, _, _, swingOverkill, _, _, spellOverkill = CombatLogGetCurrentEventInfo()
 
-			-- To an Enemy
-			if destName and not CombatLog_Object_IsA(destFlags, COMBATLOG_OBJECT_NONE) then
-				ToEnemyPlayer = CombatLog_Object_IsA(destFlags, PS_COMBATLOG_FILTER_ENEMY_PLAYERS)
-				ToEnemyNPC = CombatLog_Object_IsA(destFlags, PS_COMBATLOG_FILTER_ENEMY_NPCS)
-				ToEnemyPlayerAndNPC = CombatLog_Object_IsA(destFlags, PS_COMBATLOG_FILTER_ENEMY_PLAYERS_AND_NPCS)
+	if PS_EnableAddon == true then
+		if event == "COMBAT_LOG_EVENT_UNFILTERED" then
+			local _, eventType, _, sourceGUID, sourceName, sourceFlags, _, destGUID, destName, destFlags, _, _, swingOverkill, _, _, spellOverkill = CombatLogGetCurrentEventInfo()
+
+			eventType = PVPSound_SafeString(eventType)
+			sourceGUID = PVPSound_SafeString(sourceGUID)
+			sourceName = PVPSound_SafeString(sourceName)
+			sourceFlags = PVPSound_SafeNumber(sourceFlags)
+			destGUID = PVPSound_SafeString(destGUID)
+			destName = PVPSound_SafeString(destName)
+			destFlags = PVPSound_SafeNumber(destFlags)
+			swingOverkill = PVPSound_SafeNumber(swingOverkill)
+			spellOverkill = PVPSound_SafeNumber(spellOverkill)
+
+			local playerGUID = PVPSound_SafeString(UnitGUID("player"))
+			local playerName = PVPSound_SafeString(UnitName("player"))
+			local announcerName = sourceName or playerName or "You"
+
+			local toEnemyPlayer = false
+			local toEnemyNPC = false
+			local toEnemyPlayerAndNPC = false
+			local fromMyPets = false
+			local fromEnemyNPC = false
+			local fromEnemyPlayer = false
+			local fromEnemyPlayerAndNPC = false
+			local toEnemy = false
+			local fromEnemy = false
+
+			if destName and destFlags and not CombatLog_Object_IsA(destFlags, COMBATLOG_OBJECT_NONE) then
+				toEnemyPlayer = CombatLog_Object_IsA(destFlags, PS_COMBATLOG_FILTER_ENEMY_PLAYERS)
+				toEnemyNPC = CombatLog_Object_IsA(destFlags, PS_COMBATLOG_FILTER_ENEMY_NPCS)
+				toEnemyPlayerAndNPC = CombatLog_Object_IsA(destFlags, PS_COMBATLOG_FILTER_ENEMY_PLAYERS_AND_NPCS)
 			end
-			-- From an Enemy or from My Pets
-			if sourceName and not CombatLog_Object_IsA(sourceFlags, COMBATLOG_OBJECT_NONE) then
-				FromMyPets = CombatLog_Object_IsA(sourceFlags, PS_COMBATLOG_FILTER_MY_PETS)
-				FromEnemyNPC = CombatLog_Object_IsA(sourceFlags, PS_COMBATLOG_FILTER_ENEMY_NPCS)
-				FromEnemyPlayer = CombatLog_Object_IsA(sourceFlags, PS_COMBATLOG_FILTER_ENEMY_PLAYERS)
-				FromEnemyPlayerAndNPC = CombatLog_Object_IsA(sourceFlags, PS_COMBATLOG_FILTER_ENEMY_PLAYERS_AND_NPCS)
+
+			if sourceName and sourceFlags and not CombatLog_Object_IsA(sourceFlags, COMBATLOG_OBJECT_NONE) then
+				fromMyPets = CombatLog_Object_IsA(sourceFlags, PS_COMBATLOG_FILTER_MY_PETS)
+				fromEnemyNPC = CombatLog_Object_IsA(sourceFlags, PS_COMBATLOG_FILTER_ENEMY_NPCS)
+				fromEnemyPlayer = CombatLog_Object_IsA(sourceFlags, PS_COMBATLOG_FILTER_ENEMY_PLAYERS)
+				fromEnemyPlayerAndNPC = CombatLog_Object_IsA(sourceFlags, PS_COMBATLOG_FILTER_ENEMY_PLAYERS_AND_NPCS)
 			end
-			-- PVP and PVE Mode
+
 			if PS_Mode == "PVP" then
-				ToEnemy = ToEnemyPlayer
-				-- [12.0 Fix] Allow PvE/NPC kills if we are NOT in a PvP instance
+				toEnemy = toEnemyPlayer
 				local inInst, instType = IsInInstance()
 				if not (inInst and (instType == "pvp" or instType == "arena")) then
-					ToEnemy = ToEnemyPlayer or ToEnemyNPC
+					toEnemy = toEnemyPlayer or toEnemyNPC
 				end
-				FromEnemy = FromEnemyPlayer
+				fromEnemy = fromEnemyPlayer
 			elseif PS_Mode == "PVE" then
-				ToEnemy = ToEnemyNPC
-				FromEnemy = FromEnemyNPC
+				toEnemy = toEnemyNPC
+				fromEnemy = fromEnemyNPC
 			elseif PS_Mode == "PVPandPVE" then
-				ToEnemy = ToEnemyPlayerAndNPC
-				FromEnemy = FromEnemyPlayerAndNPC
+				toEnemy = toEnemyPlayerAndNPC
+				fromEnemy = fromEnemyPlayerAndNPC
 			end
 
-			--check killing source (player, mele pet or range pet)
-			if (eventType == "PARTY_KILL" and sourceGUID == UnitGUID("player") and ToEnemy)
-				or ((eventType == "SWING_DAMAGE" and destGUID ~= UnitGUID("player") and FromMyPets and ToEnemy and tonumber(swingOverkill) ~= nil and tonumber(swingOverkill) ~= - 1) and PS_PetKill == true)
-				or (((eventType == "RANGE_DAMAGE" or eventType == "SPELL_DAMAGE" or eventType == "SPELL_PERIODIC_DAMAGE") and destGUID ~= UnitGUID("player") and FromMyPets and ToEnemy and tonumber(spellOverkill) ~= nil and tonumber(spellOverkill) ~= - 1) and PS_PetKill == true) then
+			local playerKill = (eventType == "PARTY_KILL" and sourceGUID and playerGUID and sourceGUID == playerGUID and toEnemy)
+			local petSwingKill = ((eventType == "SWING_DAMAGE" and destGUID and playerGUID and destGUID ~= playerGUID and fromMyPets and toEnemy and swingOverkill ~= nil and swingOverkill ~= -1) and PS_PetKill == true)
+			local petSpellKill = ((((eventType == "RANGE_DAMAGE" or eventType == "SPELL_DAMAGE" or eventType == "SPELL_PERIODIC_DAMAGE")) and destGUID and playerGUID and destGUID ~= playerGUID and fromMyPets and toEnemy and spellOverkill ~= nil and spellOverkill ~= -1) and PS_PetKill == true)
 
-				if PVPSound:CheckRecentlyKilledQueue(destGUID) ~= true then
-					if PS_PaybackSound == true then
+			if playerKill or petSwingKill or petSpellKill then
+				if destGUID ~= nil and PVPSound:CheckRecentlyKilledQueue(destGUID) ~= true then
+					if PS_PaybackSound == true and destName ~= nil then
 						KilledWho = destName
 						PVPSound:AddToPaybackQueue(KilledWho)
 					end
-					-- First Killing
+
 					if not LastKill or (GetTime() - LastKill > ResetTime) or TimerReset then
 						CurrentStreak = 1
 						PVPSound:TriggerKill("Kill", CurrentStreak)
-						-- RetributionKilling (First Blood)
-						if PS_PaybackSound == true then
+
+						if PS_PaybackSound == true and KilledWho ~= nil then
 							if PVPSound:CheckRetributionQueue(KilledWho) == true then
 								if PVPSound:CheckRecentlyPaybackQueue("Retribution") ~= true then
 									PVPSound:TriggerKill("PaybackKill", 2)
@@ -1071,7 +1138,7 @@ function PVPSound:OnEventKills(event, ...)
 								PVPSound:AddToRecentlyPaybackQueue("Retribution")
 							end
 						end
-						-- Emotes and Fake Emotes
+
 						if PS_Emote == true then
 							local KillSoundLengthTable = getglobal("PVPSound_"..PS.KillSoundPack.."KillDurations")
 							if PS_EmoteMode == true then
@@ -1085,22 +1152,23 @@ function PVPSound:OnEventKills(event, ...)
 							elseif PS_EmoteMode == false then
 								if MyGender == "Male" then
 									local Message = L["Streak1Male"]
-									print("|cFFFF4500"..sourceName.." "..Message.." "..KillSoundLengthTable[CurrentStreak].name.."!".."|r")
+									print("|cFFFF4500"..announcerName.." "..Message.." "..KillSoundLengthTable[CurrentStreak].name.."!|r")
 								elseif MyGender == "Female" then
 									local Message = L["Streak1Female"]
-									print("|cFFFF4500"..sourceName.." "..Message.." "..KillSoundLengthTable[CurrentStreak].name.."!".."|r")
+									print("|cFFFF4500"..announcerName.." "..Message.." "..KillSoundLengthTable[CurrentStreak].name.."!|r")
 								end
 							end
 						end
+
 						if PS_MultiKillSound == true then
 							if not LastKill or (GetTime() - LastKill > MultiKillTime) or TimerReset then
 								MultiKills = 1
 							end
 						end
 						TimerReset = false
-					 -- Killing
+
 					elseif (GetTime() - LastKill <= ResetTime) then
-						if (GetTime() - LastKill <= PS.KillTime) then --rank update condition
+						if (GetTime() - LastKill <= PS.KillTime) then
 							FirstKill = LastKill
 							if (GetTime() - FirstKill <= PS.KillTime) then
 								local KillSoundLengthTable = getglobal("PVPSound_"..PS.KillSoundPack.."KillDurations")
@@ -1113,8 +1181,8 @@ function PVPSound:OnEventKills(event, ...)
 								if CurrentStreak <= table.getn(KillSoundLengthTable) then
 									PVPSound:TriggerKill("Kill", CurrentStreak)
 								end
-								-- RetributionKilling (0-60sec)
-								if PS_PaybackSound == true then
+
+								if PS_PaybackSound == true and KilledWho ~= nil then
 									if PVPSound:CheckRetributionQueue(KilledWho) == true then
 										if PVPSound:CheckRecentlyPaybackQueue("Retribution") ~= true then
 											PVPSound:TriggerKill("PaybackKill", 2)
@@ -1122,7 +1190,7 @@ function PVPSound:OnEventKills(event, ...)
 										PVPSound:AddToRecentlyPaybackQueue("Retribution")
 									end
 								end
-								-- Emotes and Fake Emotes
+
 								if PS_Emote == true then
 									local KillSoundLengthTable = getglobal("PVPSound_"..PS.KillSoundPack.."KillDurations")
 									if PS_EmoteMode == true then
@@ -1146,16 +1214,16 @@ function PVPSound:OnEventKills(event, ...)
 												Message = L["Streak10"]
 											end
 											if CurrentStreak < table.getn(KillSoundLengthTable) then
-												print("|cFFFF4500"..sourceName.." "..Message.." "..KillSoundLengthTable[CurrentStreak].name.."!".."|r")
+												print("|cFFFF4500"..announcerName.." "..Message.." "..KillSoundLengthTable[CurrentStreak].name.."!|r")
 											elseif CurrentStreak == table.getn(KillSoundLengthTable) then
-												print("|cFFFF4500"..sourceName.." "..Message.." "..KillSoundLengthTable[CurrentStreak].name.."!!!".."|r")
+												print("|cFFFF4500"..announcerName.." "..Message.." "..KillSoundLengthTable[CurrentStreak].name.."!!!|r")
 											else
-												print("|cFFFF4500"..sourceName.." "..Message.." "..KillSoundLengthTable[table.getn(KillSoundLengthTable)].name.."!!!".."|r")
+												print("|cFFFF4500"..announcerName.." "..Message.." "..KillSoundLengthTable[table.getn(KillSoundLengthTable)].name.."!!!|r")
 											end
 										end
 									end
 								end
-								-- MultiKilling
+
 								if PS_MultiKillSound == true then
 									if (GetTime() - LastKill <= MultiKillTime) then
 										FirstMultiKill = LastKill
@@ -1176,21 +1244,19 @@ function PVPSound:OnEventKills(event, ...)
 								end
 							end
 						elseif (GetTime() - LastKill > PS.KillTime) then
-							-- If triggers a kill after the Killing Time (60 sec) than replay the last KillSound without emote and SCT
 							if PS_KillSound == true then
 								if RankStep <= 1 then
 									local KillSoundLengthTable = getglobal("PVPSound_"..PS.KillSoundPack.."KillDurations")
 									PVPSound:AddKillToQueue("Kill", KillSoundLengthTable[CurrentStreak].dir)
-									-- Create a blank table in the Sct Queue with "nil" string message
 									if PS_KillSct == true or PS_MultiKillSct == true or PS_PaybackSct == true then
 										local KillSoundLengthTable = getglobal("PVPSound_"..PS.KillSoundPack.."KillDurations")
 										PVPSound:AddSctToQueue("Kill", KillSoundLengthTable[CurrentStreak].dir, "nil", PSSctFrame)
 									end
 								end
 							end
-							-- RetributionKilling (60-90sec)
+
 							if (GetTime() - LastKill < PS.PaybackKillTime) then
-								if PS_PaybackSound == true then
+								if PS_PaybackSound == true and KilledWho ~= nil then
 									if PVPSound:CheckRetributionQueue(KilledWho) == true then
 										if PVPSound:CheckRecentlyPaybackQueue("Retribution") ~= true then
 											PVPSound:TriggerKill("PaybackKill", 2)
@@ -1201,7 +1267,7 @@ function PVPSound:OnEventKills(event, ...)
 							end
 						end
 					end
-					-- Reseting MultiKilling
+
 					if PS_MultiKillSound == true then
 						if not LastKill or (GetTime() - LastKill > MultiKillTime) then
 							MultiKills = 1
@@ -1209,20 +1275,22 @@ function PVPSound:OnEventKills(event, ...)
 					end
 					LastKill = GetTime()
 				end
-				PVPSound:AddToRecentlyKilledQueue(destGUID)
-			 -- PaybackKilling
-			elseif (eventType == "SWING_DAMAGE" and FromEnemy and destGUID == UnitGUID("player") and tonumber(swingOverkill) ~= nil and tonumber(swingOverkill) ~= - 1) or ((eventType == "RANGE_DAMAGE" or eventType == "SPELL_DAMAGE" or eventType == "SPELL_PERIODIC_DAMAGE") and FromEnemy and destGUID == UnitGUID("player") and tonumber(spellOverkill) ~= nil and tonumber(spellOverkill) ~= - 1) then
-				-- If the killer is not nil
+
+				if destGUID ~= nil then
+					PVPSound:AddToRecentlyKilledQueue(destGUID)
+				end
+
+			elseif ((eventType == "SWING_DAMAGE" and fromEnemy and destGUID and playerGUID and destGUID == playerGUID and swingOverkill ~= nil and swingOverkill ~= -1)
+				or (((eventType == "RANGE_DAMAGE" or eventType == "SPELL_DAMAGE" or eventType == "SPELL_PERIODIC_DAMAGE")) and fromEnemy and destGUID and playerGUID and destGUID == playerGUID and spellOverkill ~= nil and spellOverkill ~= -1)) then
 				if sourceName ~= nil then
-					-- If the killer is not the player
-					if sourceName ~= UnitName("player") then
+					if sourceName ~= playerName then
 						KilledMe = sourceName
-						if FromEnemyPlayer then
-							KilledBy = tostring(sourceName)
-						elseif FromEnemyNPC then
-							KilledBy = tostring(sourceName.."!")
+						if fromEnemyPlayer then
+							KilledBy = sourceName
+						elseif fromEnemyNPC then
+							KilledBy = sourceName.."!"
 						else
-							KilledBy = tostring(sourceName)
+							KilledBy = sourceName
 						end
 						if PS_PaybackSound == true then
 							PVPSound:AddToRetributionQueue(KilledMe)
@@ -1235,12 +1303,10 @@ function PVPSound:OnEventKills(event, ...)
 						end
 					end
 				end
-			 -- Environmental Deaths
-			elseif eventType == "ENVIRONMENTAL" and destGUID == UnitGUID("player") then
-				if sourceName ~= nil or sourceName == nil then
-					KilledMe = nil
-					KilledBy = nil
-				end
+
+			elseif eventType == "ENVIRONMENTAL" and destGUID and playerGUID and destGUID == playerGUID then
+				KilledMe = nil
+				KilledBy = nil
 			end
 		end
 	end
@@ -1337,92 +1403,17 @@ function PVPSound:TriggerKill(killType, streakNumber)
 	end
 end
 
--- [FORCE PATCH: 12.0.1 OVERRIDE]
--- The following functions overwrite the originals to fix 12.0 API Crashes.
-_G["PVPSound"] = PVPSound
 
--- 1. SAFE STARTUP (Fixes RegisterEvent Crash)
-function PVPSound:LoadKills()
-    if not PVPSoundFrameKills then
-        PVPSoundFrameKills = CreateFrame("Frame", nil)
-    end
-
-    if (PS_KillSound == true or PS_MultiKillSound == true or PS_PaybackSound == true) and PS_EnableAddon == true then
-        -- [FIX] Polling Mode Only. NO RegisterEvent allowed here.
-        PVPSoundFrameKills:SetScript("OnUpdate", function(_, elapsed) PVPSound:KillsOnUpdate(elapsed) end)
-        PVPSound:ResetScoreTracking()
-    else
-        PVPSoundFrameKills:SetScript("OnUpdate", nil)
-    end
-end
-
--- 2. SAFE RESET (Fixes Secret Value Crash)
-function PVPSound:ResetScoreTracking()
-    PVPSound._LastDeaths = nil
-    PVPSound_ScoreRequestElapsed = 0
-    PVPSound_LastScoreRequest = 0
-    -- [FIX] Seed with Achievement Stat 1487 (Safe Public Value)
-    local _, _, _, _, _, _, _, _, killCount = GetAchievementCriteriaInfoByID(1487, 0)
-    PVPSound._LastKillStat = killCount or 0
-    PVPSound._FastKillTimestamp = 0
-end
-
--- 3. SAFE SCORE UPDATE (Fixes Arithmetic Crash)
-function PVPSound:HandleScoreUpdate()
-    local inInst, instType = IsInInstance()
-    if not (inInst and (instType == "pvp" or instType == "arena")) then return end
-
-    -- [FIX] Use Achievement API (Stat 1487) to bypass Secret Values
-    local _, _, _, _, _, _, _, _, currentKB = GetAchievementCriteriaInfoByID(1487, 0)
-    currentKB = currentKB or 0
-
-    if PVPSound._LastKillStat == nil then
-        PVPSound._LastKillStat = currentKB
-        return
-    end
-
-    local deltaKB = currentKB - PVPSound._LastKillStat
-    PVPSound._LastKillStat = currentKB
-
-    if deltaKB > 0 then
-        -- Deduplication logic
-        local now = GetTime()
-        if PVPSound._FastKillTimestamp and (now - PVPSound._FastKillTimestamp) < 3.0 then
-            -- Skipped (Fast path handled it)
-        else
-            for i = 1, deltaKB do
-                PVPSound:HandleKillingBlowInternal("SCORE")
-            end
-        end
-    end
-end
-
--- 4. SAFE FACTION CHECK (Fixes Comparison Crash)
-function PVPSound:GetMyScoreInfo()
-    -- [FIX] Return nil to force usage of UnitFactionGroup
-    return nil
-end
-
--- 5. SAFE VISUALS (Console Mode)
-local oldDefaultSettings = PVPSound.DefaultSettings
-function PVPSound:DefaultSettings()
-    if oldDefaultSettings then oldDefaultSettings(self) end
-    PS_Emote = true
-    PS_EmoteMode = false -- Force Local Print
-end
-
--- 6. RESTORE COMMAND (Fixes /psannounce)
 SLASH_PSANNOUNCE1 = "/psannounce"
 SlashCmdList["PSANNOUNCE"] = function(msg)
-    -- [FIX] Use UnitFactionGroup (Safe) instead of Scoreboard (Secret)
-    local fGroup = UnitFactionGroup("player")
-    local isAlliance = (fGroup == "Alliance")
+	local fGroup = UnitFactionGroup("player")
+	local isAlliance = (fGroup == "Alliance")
 
-    if isAlliance then
-        print("|cFF00FF00[PVPSound]|r Faction: Alliance -> Blue Team")
-        PVPSound:AddToQueue(PS.SoundPackDirectory.."\\Eng\\GameStatus\\PlayYouAreOnBlue.mp3")
-    else
-        print("|cFF00FF00[PVPSound]|r Faction: Horde -> Red Team")
-        PVPSound:AddToQueue(PS.SoundPackDirectory.."\\Eng\\GameStatus\\PlayYouAreOnRed.mp3")
-    end
+	if isAlliance then
+		print("|cFF00FF00[PVPSound]|r Faction: Alliance -> Blue Team")
+		PVPSound:AddToQueue(PS.SoundPackDirectory.."\\Eng\\GameStatus\\PlayYouAreOnBlue.mp3")
+	else
+		print("|cFF00FF00[PVPSound]|r Faction: Horde -> Red Team")
+		PVPSound:AddToQueue(PS.SoundPackDirectory.."\\Eng\\GameStatus\\PlayYouAreOnRed.mp3")
+	end
 end
